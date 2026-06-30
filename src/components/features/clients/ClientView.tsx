@@ -22,7 +22,9 @@ export async function ClientView({ clientId }: { clientId: string }) {
         invoice_number,
         issue_date,
         due_date,
+        original_amount,
         balance_amount,
+        observations,
         brands(name),
         vendors(name)
       )
@@ -48,6 +50,8 @@ export async function ClientView({ clientId }: { clientId: string }) {
   // Process invoices for metrics
   const processedInvoices = client.invoices.map((inv: any) => {
     const balance = Number(inv.balance_amount);
+    const original = Number(inv.original_amount);
+    const payment = original - balance;
     const dueDate = new Date(inv.due_date + "T12:00:00Z");
     const overdueDays = differenceInDays(today, dueDate);
     
@@ -62,6 +66,8 @@ export async function ClientView({ clientId }: { clientId: string }) {
     return {
       ...inv,
       balance,
+      original,
+      payment,
       dueDate,
       overdueDays: overdueDays > 0 ? overdueDays : 0,
       brandName: inv.brands?.name || "-",
@@ -160,8 +166,10 @@ export async function ClientView({ clientId }: { clientId: string }) {
                 <th className="px-4 py-3 font-medium text-slate-400">Comprobante</th>
                 <th className="px-4 py-3 font-medium text-slate-400">Emisión</th>
                 <th className="px-4 py-3 font-medium text-slate-400">Vencimiento</th>
-                <th className="px-4 py-3 font-medium text-slate-400">Estado</th>
+                <th className="px-4 py-3 font-medium text-slate-400 text-right">Importe</th>
+                <th className="px-4 py-3 font-medium text-slate-400 text-right">SuPago</th>
                 <th className="px-4 py-3 font-medium text-slate-400 text-right">Saldo</th>
+                <th className="px-4 py-3 font-medium text-slate-400">Estado / Obs.</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
@@ -178,21 +186,34 @@ export async function ClientView({ clientId }: { clientId: string }) {
                   <td className="px-4 py-3 text-slate-400">
                     {format(inv.dueDate, "dd MMM yyyy", { locale: es })}
                   </td>
-                  <td className="px-4 py-3">
-                    {inv.overdueDays > 0 ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
-                        <Clock className="w-3 h-3" />
-                        {inv.overdueDays} d. mora
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        <CheckCircle2 className="w-3 h-3" />
-                        Al día
-                      </span>
-                    )}
+                  <td className="px-4 py-3 text-right font-medium text-slate-300">
+                    {formatCurrency(inv.original)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-medium text-slate-400">
+                    {formatCurrency(inv.payment)}
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-emerald-400">
                     {formatCurrency(inv.balance)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-1">
+                      {inv.overdueDays > 0 ? (
+                        <span className="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
+                          <Clock className="w-3 h-3" />
+                          {inv.overdueDays} d. mora
+                        </span>
+                      ) : (
+                        <span className="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Al día
+                        </span>
+                      )}
+                      {inv.observations && inv.observations.trim() !== '' && (
+                        <span className="text-xs text-slate-500 font-mono">
+                          Obs: {inv.observations}
+                        </span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
