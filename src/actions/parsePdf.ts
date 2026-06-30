@@ -50,7 +50,8 @@ export async function parsePdfAction(formData: FormData) {
     // Example: PEREZ BARBARA INES 10001 S.M. TUCUMAN Buenos Aires 85 * 24622154/ 27246221540
     // Example: BARRIONUEVO MYRIAM EV10024 S.M. TUCUMAN Monteagudo 747 Local 1 * 23178775/ 27231787750
     // Example: ARREGUEZ FATIMA 10035 S.M. TUCUMAN ITALIA 1426 * 25214882/ 0
-    const clientHeaderRegex = /^(.+?)\s+(\d{5})\s+(.+?)\s+([A-Za-z0-9\s.]+?)\s*\*\s*([\d/]+)?(?:\s+0)?$/;
+    // Example: CANEPA ANDREA CECILIA10025 S.M. TUCUMAN            Salta 137 Local 1 * 23015943/ 27230159438 (no space before code)
+    const clientHeaderRegex = /^(.+?)\s*(\d{5})\s+(.+?)\s+([A-Za-z0-9\s.]+?)\s*\*\s*([\d/]+)?(?:\s+0)?$/;
 
     // Regex for the invoice line.
     // Wella (0012) 10/06/26 A08000013 18/06/26 152134,66 0,00 152134,66 4 00

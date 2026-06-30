@@ -115,7 +115,19 @@ export async function ClientView({ clientId }: { clientId: string }) {
           </div>
           <p className="opacity-80 flex flex-wrap items-center gap-2 text-sm">
             <span className="font-mono">Cód: {client.client_code}</span> • 
-            <span>{client.identifier || "Sin CUIT"}</span> • 
+            <span>
+              {client.identifier ? (
+                client.identifier.includes("/") ? (
+                  <>
+                    <span className="font-medium text-slate-300">DNI:</span> {client.identifier.split("/")[0].trim()} | <span className="font-medium text-slate-300">CUIT:</span> {client.identifier.split("/")[1].trim()}
+                  </>
+                ) : (
+                  client.identifier
+                )
+              ) : (
+                "Sin CUIT/DNI"
+              )}
+            </span> • 
             <MapPin className="w-3 h-3 inline" /> {client.address || "-"}, {client.locality || "-"}
           </p>
         </div>

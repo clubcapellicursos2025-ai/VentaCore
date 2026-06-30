@@ -71,7 +71,20 @@ export default async function ClientsPage(props: { searchParams: Promise<{ q?: s
                     </Link>
                     <div className="text-xs text-slate-500 font-mono mt-1">Cód: {client.client_code}</div>
                   </td>
-                  <td className="px-6 py-4 text-slate-400">{client.identifier || "-"}</td>
+                  <td className="px-6 py-4 text-slate-400">
+                    {client.identifier ? (
+                      client.identifier.includes("/") ? (
+                        <div className="flex flex-col gap-0.5 text-xs">
+                          <span><strong className="text-slate-300 font-medium">DNI:</strong> {client.identifier.split("/")[0].trim()}</span>
+                          <span><strong className="text-slate-300 font-medium">CUIT:</strong> {client.identifier.split("/")[1].trim()}</span>
+                        </div>
+                      ) : (
+                        client.identifier
+                      )
+                    ) : (
+                      "-"
+                    )}
+                  </td>
                   <td className="px-6 py-4 text-slate-400">{client.locality || "-"}</td>
                   <td className="px-6 py-4 font-medium text-right text-emerald-400">
                     ${totalDebt.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
