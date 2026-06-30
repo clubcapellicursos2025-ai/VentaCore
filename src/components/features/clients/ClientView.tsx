@@ -52,8 +52,10 @@ export async function ClientView({ clientId }: { clientId: string }) {
     const balance = Number(inv.balance_amount);
     const original = Number(inv.original_amount);
     const payment = original - balance;
+    const issueDate = new Date(inv.issue_date + "T12:00:00Z");
     const dueDate = new Date(inv.due_date + "T12:00:00Z");
     const overdueDays = differenceInDays(today, dueDate);
+    const ageDays = differenceInDays(today, issueDate);
     
     total_debt += balance;
     if (overdueDays > 0) {
@@ -69,7 +71,10 @@ export async function ClientView({ clientId }: { clientId: string }) {
       original,
       payment,
       dueDate,
+      issueDate,
+      ageDays,
       overdueDays: overdueDays > 0 ? overdueDays : 0,
+      daysToDue: overdueDays < 0 ? Math.abs(overdueDays) : 0,
       brandName: inv.brands?.name || "-",
       vendorName: inv.vendors?.name || "-"
     };
@@ -205,9 +210,12 @@ export async function ClientView({ clientId }: { clientId: string }) {
                       ) : (
                         <span className="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                           <CheckCircle2 className="w-3 h-3" />
-                          Al día
+                          {inv.daysToDue > 0 ? `A vencer en ${inv.daysToDue} d.` : `Vence hoy`}
                         </span>
                       )}
+                      <span className="text-xs text-slate-400">
+                        {inv.ageDays} d. desde emisión
+                      </span>
                       {inv.observations && inv.observations.trim() !== '' && (
                         <span className="text-xs text-slate-500 font-mono">
                           Obs: {inv.observations}

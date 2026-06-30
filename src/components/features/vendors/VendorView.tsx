@@ -51,8 +51,10 @@ export async function VendorView({ vendorId }: { vendorId: string }) {
 
   const processedInvoices = vendor.invoices.map((inv: any) => {
     const balance = Number(inv.balance_amount);
+    const issueDate = new Date(inv.issue_date + "T12:00:00Z");
     const dueDate = new Date(inv.due_date + "T12:00:00Z");
     const overdueDays = differenceInDays(today, dueDate);
+    const ageDays = differenceInDays(today, issueDate);
     const clientName = inv.clients?.name || "Desconocido";
     
     total_debt += balance;
@@ -69,7 +71,10 @@ export async function VendorView({ vendorId }: { vendorId: string }) {
       ...inv,
       balance,
       dueDate,
+      issueDate,
+      ageDays,
       overdueDays: overdueDays > 0 ? overdueDays : 0,
+      daysToDue: overdueDays < 0 ? Math.abs(overdueDays) : 0,
       clientName,
       clientId: inv.clients?.id,
       clientCode: inv.clients?.client_code,
@@ -172,17 +177,22 @@ export async function VendorView({ vendorId }: { vendorId: string }) {
                     {format(inv.dueDate, "dd MMM yyyy", { locale: es })}
                   </td>
                   <td className="px-4 py-3">
-                    {inv.overdueDays > 0 ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
-                        <Clock className="w-3 h-3" />
-                        {inv.overdueDays} d. mora
+                    <div className="flex flex-col gap-1">
+                      {inv.overdueDays > 0 ? (
+                        <span className="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
+                          <Clock className="w-3 h-3" />
+                          {inv.overdueDays} d. mora
+                        </span>
+                      ) : (
+                        <span className="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          <CheckCircle2 className="w-3 h-3" />
+                          {inv.daysToDue > 0 ? `A vencer en ${inv.daysToDue} d.` : `Vence hoy`}
+                        </span>
+                      )}
+                      <span className="text-xs text-slate-400">
+                        {inv.ageDays} d. desde emisión
                       </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        <CheckCircle2 className="w-3 h-3" />
-                        Al día
-                      </span>
-                    )}
+                    </div>
                   </td>
                   <td className={`px-4 py-3 text-right font-medium ${inv.overdueDays > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
                     {formatCurrency(inv.balance)}
