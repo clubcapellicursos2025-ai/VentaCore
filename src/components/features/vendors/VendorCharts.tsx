@@ -32,7 +32,7 @@ export function VendorCharts({ data }: { data: { name: string, value: number }[]
                 ))}
               </Pie>
               <Tooltip 
-                formatter={(value: number) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(value)}
+                formatter={(value: any) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(Number(value))}
                 contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '0.5rem', color: '#f8fafc' }}
               />
             </PieChart>
@@ -48,7 +48,7 @@ export function VendorCharts({ data }: { data: { name: string, value: number }[]
               <XAxis type="number" stroke="#475569" fontSize={12} tickFormatter={(val) => `$${val/1000}k`} />
               <YAxis dataKey="name" type="category" stroke="#475569" fontSize={11} width={100} />
               <Tooltip 
-                formatter={(value: number) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(value)}
+                formatter={(value: any) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(Number(value))}
                 contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '0.5rem', color: '#f8fafc' }}
               />
               <Bar dataKey="value" fill="#10b981" radius={[0, 4, 4, 0]} />
