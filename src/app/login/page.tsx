@@ -1,7 +1,10 @@
 import { login } from "@/actions/auth";
-import { Lock } from "lucide-react";
+import { Lock, AlertCircle } from "lucide-react";
 
-export default function LoginPage() {
+export default async function LoginPage(props: { searchParams: Promise<{ error?: string }> }) {
+  const searchParams = await props.searchParams;
+  const errorMsg = searchParams?.error;
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
       <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
@@ -13,6 +16,12 @@ export default function LoginPage() {
           <p className="text-slate-400 text-sm mb-8">Ingresa tus credenciales de administrador para continuar.</p>
 
           <form action={login} className="space-y-4">
+            {errorMsg && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2 text-sm text-red-500 mb-4">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <p>{errorMsg}</p>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-1.5">Email</label>
               <input 

@@ -4,7 +4,7 @@ import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-export async function login(formData: FormData) {
+export async function login(formData: FormData): Promise<void> {
   const email = formData.get("email") as string;
   const password = formData.get("password") as string;
   
@@ -16,7 +16,7 @@ export async function login(formData: FormData) {
   });
 
   if (error) {
-    return { success: false, error: error.message };
+    redirect("/login?error=" + encodeURIComponent(error.message));
   }
 
   revalidatePath("/", "layout");
