@@ -78,12 +78,21 @@ export async function saveImportAction(filename: string, clients: ParsedClient[]
 
   // Fix date formats
   const sanitizeDate = (dateStr: string) => {
+    if (!dateStr) return dateStr;
     // If it's DD/MM/YY, convert to YYYY-MM-DD
     const parts = dateStr.split("/");
     if (parts.length === 3) {
       let year = parseInt(parts[2]);
       if (year < 100) year += 2000;
       return `${year}-${parts[1]}-${parts[0]}`;
+    }
+    // If it's DDMMYY (length 6, no slashes), convert to YYYY-MM-DD
+    if (dateStr.length === 6 && !dateStr.includes("/")) {
+       const d = dateStr.substring(0, 2);
+       const m = dateStr.substring(2, 4);
+       let y = parseInt(dateStr.substring(4, 6));
+       if (y < 100) y += 2000;
+       return `${y}-${m}-${d}`;
     }
     return dateStr;
   };

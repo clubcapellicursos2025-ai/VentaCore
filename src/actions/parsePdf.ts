@@ -57,6 +57,10 @@ export async function parsePdfAction(formData: FormData) {
     // Farmavi *(PAG ) 05/09/25 A08041804 06/08/25 109048,83 110000,00 -951,17 301025 1 30
     const invoiceRegex = /^([A-Za-z]+)\s+(\*?\([\w\s]+\))\s+(\d{2}\/\d{2}\/\d{2})\s+([A-Za-z0-9]+)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,-]+)\s+([\d.,-]+)\s+([\d.,-]+)(.*)$/;
 
+    // (055) 230526 A08045176 080526 7.494,06 0,00 7.494,06 3
+    // *(119) 040426 02045813 050326 474.412,72 473.842,84 569,88 190526 3
+    const invoiceRegexNew = /^(\*?\(\d{3}\))\s+(\d{6})\s+([A-Za-z0-9]+)\s+(\d{6})\s+([\d.,-]+)\s+([\d.,-]+)\s+([\d.,-]+)\s*(.*)$/;
+
     for (const line of lines) {
       // Check if it's a client header
       // We look for "* " which usually denotes the start of the identifier
@@ -98,38 +102,76 @@ export async function parsePdfAction(formData: FormData) {
         }
       } 
       // Check if it's an invoice line
-      else if (currentClient && invoiceRegex.test(line)) {
-        const match = line.match(invoiceRegex);
-        if (match) {
-          const rest = match[9].trim().split(/\s+/);
-          let ultPag, vd, obs;
-          
-          // The rest can be [UltPag, Vd, Obs] or [Vd, Obs] or [Vd]
-          // If it has 6 digits, it's probably a date (UltPag)
-          if (rest.length > 0) {
-            if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
-              ultPag = rest[0];
-              vd = rest[1];
-              obs = rest.slice(2).join(" ");
-            } else {
-              vd = rest[0];
-              obs = rest.slice(1).join(" ");
-            }
-          }
+      else if (currentClient) {
+        let parsedInvoice = null;
 
-          currentClient.invoices.push({
-            brand: match[1],
-            mora: match[2],
-            dueDate: match[3],
-            invoiceNumber: match[4],
-            issueDate: match[5],
-            originalAmount: match[6],
-            paymentAmount: match[7],
-            balanceAmount: match[8],
-            lastPaymentDate: ultPag,
-            vendorCode: vd,
-            observations: obs
-          });
+        // Try original format
+        if (invoiceRegex.test(line)) {
+          const match = line.match(invoiceRegex);
+          if (match) {
+            const rest = match[9].trim().split(/\s+/);
+            let ultPag, vd, obs;
+            
+            if (rest.length > 0) {
+              if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
+                ultPag = rest[0];
+                vd = rest[1];
+                obs = rest.slice(2).join(" ");
+              } else {
+                vd = rest[0];
+                obs = rest.slice(1).join(" ");
+              }
+            }
+            parsedInvoice = {
+              brand: match[1],
+              mora: match[2],
+              dueDate: match[3],
+              invoiceNumber: match[4],
+              issueDate: match[5],
+              originalAmount: match[6],
+              paymentAmount: match[7],
+              balanceAmount: match[8],
+              lastPaymentDate: ultPag,
+              vendorCode: vd,
+              observations: obs
+            };
+          }
+        } 
+        // Try new format (without brand, dates as DDMMYY)
+        else if (invoiceRegexNew.test(line)) {
+          const match = line.match(invoiceRegexNew);
+          if (match) {
+            const rest = match[8].trim().split(/\s+/);
+            let ultPag, vd, obs;
+            
+            if (rest.length > 0) {
+              if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
+                ultPag = rest[0];
+                vd = rest[1];
+                obs = rest.slice(2).join(" ");
+              } else {
+                vd = rest[0];
+                obs = rest.slice(1).join(" ");
+              }
+            }
+            parsedInvoice = {
+              brand: "S/M", // Sin Marca (brand no viene en este formato)
+              mora: match[1],
+              dueDate: match[2],
+              invoiceNumber: match[3],
+              issueDate: match[4],
+              originalAmount: match[5],
+              paymentAmount: match[6],
+              balanceAmount: match[7],
+              lastPaymentDate: ultPag,
+              vendorCode: vd,
+              observations: obs
+            };
+          }
+        }
+
+        if (parsedInvoice) {
+          currentClient.invoices.push(parsedInvoice);
         }
       }
     }

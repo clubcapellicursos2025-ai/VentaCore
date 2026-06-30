@@ -48,7 +48,7 @@ export async function ClientView({ clientId }: { clientId: string }) {
   // Process invoices for metrics
   const processedInvoices = client.invoices.map((inv: any) => {
     const balance = Number(inv.balance_amount);
-    const dueDate = new Date(inv.due_date);
+    const dueDate = new Date(inv.due_date + "T12:00:00Z");
     const overdueDays = differenceInDays(today, dueDate);
     
     total_debt += balance;
@@ -173,7 +173,7 @@ export async function ClientView({ clientId }: { clientId: string }) {
                   </td>
                   <td className="px-4 py-3 font-mono text-slate-300 text-xs">{inv.invoice_number}</td>
                   <td className="px-4 py-3 text-slate-400">
-                    {format(new Date(inv.issue_date), "dd MMM yyyy", { locale: es })}
+                    {format(new Date(inv.issue_date + "T12:00:00Z"), "dd MMM yyyy", { locale: es })}
                   </td>
                   <td className="px-4 py-3 text-slate-400">
                     {format(inv.dueDate, "dd MMM yyyy", { locale: es })}

@@ -51,7 +51,7 @@ export async function VendorView({ vendorId }: { vendorId: string }) {
 
   const processedInvoices = vendor.invoices.map((inv: any) => {
     const balance = Number(inv.balance_amount);
-    const dueDate = new Date(inv.due_date);
+    const dueDate = new Date(inv.due_date + "T12:00:00Z");
     const overdueDays = differenceInDays(today, dueDate);
     const clientName = inv.clients?.name || "Desconocido";
     
