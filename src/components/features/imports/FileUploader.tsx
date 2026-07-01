@@ -1,15 +1,17 @@
 "use client";
 
 import React, { useState, useTransition } from "react";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Sparkles } from "lucide-react";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Sparkles, FileText } from "lucide-react";
 import { parseExcelAction } from "@/actions/parseExcel";
-import type { ParsedClient, ParseResult } from "@/actions/importTypes";
 import { parsePdfAction } from "@/actions/parsePdf";
+import { parseTxtAction } from "@/actions/parseTxt";
+import type { ParsedClient, ParseResult } from "@/actions/importTypes";
 import { saveImportAction } from "@/actions/saveImport";
 import LoadingOverlay from "@/components/common/LoadingOverlay";
 import AlertModal from "@/components/common/AlertModal";
 
 export default function FileUploader() {
+  const [importMode, setImportMode] = useState<"PDF_EXCEL" | "TXT">("PDF_EXCEL");
   const [file, setFile] = useState<File | null>(null);
   const [isParsing, startParsing] = useTransition();
   const [isSaving, startSaving] = useTransition();
@@ -43,8 +45,13 @@ export default function FileUploader() {
         const formData = new FormData();
         formData.append("file", file);
         
-        const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
-        const data = isPdf ? await parsePdfAction(formData) : await parseExcelAction(formData);
+        let data: ParseResult;
+        if (importMode === "TXT") {
+          data = await parseTxtAction(formData);
+        } else {
+          const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
+          data = isPdf ? await parsePdfAction(formData) : await parseExcelAction(formData);
+        }
         
         if (data.error) {
            setError(data.error);
@@ -83,7 +90,10 @@ export default function FileUploader() {
 
      startSaving(async () => {
         try {
-           const formatType = file.name.toLowerCase().endsWith(".pdf") ? "PDF" : "Excel/CSV";
+           const formatType = importMode === "TXT" 
+             ? "TXT/CSV" 
+             : (file.name.toLowerCase().endsWith(".pdf") ? "PDF" : "Excel");
+
            const res = await saveImportAction(file.name, formatType, clientsToSave);
            if (res.success) {
               setResult(null);
@@ -151,43 +161,106 @@ export default function FileUploader() {
         onClose={modalState.onClose || (() => setModalState(prev => ({ ...prev, isOpen: false })))}
       />
 
-      <div className="border-2 border-dashed border-slate-700/80 rounded-2xl p-10 bg-gradient-to-b from-slate-900/80 to-slate-950/80 hover:border-blue-500/50 transition-all flex flex-col items-center justify-center text-center shadow-xl">
-        <div className="w-16 h-16 bg-gradient-to-tr from-blue-600/20 to-cyan-500/20 border border-blue-500/30 rounded-2xl flex items-center justify-center mb-4 shadow-inner">
-          <Upload className="w-8 h-8 text-blue-400 animate-bounce" style={{ animationDuration: "3s" }} />
+      {/* Botones de Selección de Modo de Importación */}
+      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+        <button
+          type="button"
+          onClick={() => { setImportMode("PDF_EXCEL"); setFile(null); setResult(null); setError(null); }}
+          className={`flex-1 py-3.5 px-5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2.5 transition-all border shadow-lg ${
+            importMode === "PDF_EXCEL"
+              ? "bg-gradient-to-r from-blue-600 to-cyan-600 text-white border-cyan-400/40 shadow-blue-500/20 scale-[1.01]"
+              : "bg-slate-900/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-slate-200"
+          }`}
+        >
+          <FileSpreadsheet className="w-5 h-5" />
+          <span>Importar por PDF / Excel</span>
+          {importMode === "PDF_EXCEL" && <span className="ml-1.5 w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setImportMode("TXT"); setFile(null); setResult(null); setError(null); }}
+          className={`flex-1 py-3.5 px-5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2.5 transition-all border shadow-lg ${
+            importMode === "TXT"
+              ? "bg-gradient-to-r from-amber-600 to-orange-600 text-white border-amber-400/40 shadow-amber-500/20 scale-[1.01]"
+              : "bg-slate-900/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-slate-200"
+          }`}
+        >
+          <FileText className="w-5 h-5" />
+          <span>Importar por Archivo TXT</span>
+          {importMode === "TXT" && <span className="ml-1.5 w-2 h-2 rounded-full bg-amber-400 animate-pulse" />}
+        </button>
+      </div>
+
+      <div className={`border-2 border-dashed rounded-2xl p-10 transition-all flex flex-col items-center justify-center text-center shadow-xl ${
+        importMode === "PDF_EXCEL"
+          ? "border-slate-700/80 bg-gradient-to-b from-slate-900/80 to-slate-950/80 hover:border-blue-500/50"
+          : "border-amber-700/50 bg-gradient-to-b from-slate-900/90 to-amber-950/20 hover:border-amber-500/60"
+      }`}>
+        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-inner border ${
+          importMode === "PDF_EXCEL"
+            ? "bg-gradient-to-tr from-blue-600/20 to-cyan-500/20 border-blue-500/30 text-blue-400"
+            : "bg-gradient-to-tr from-amber-600/20 to-orange-500/20 border-amber-500/30 text-amber-400"
+        }`}>
+          {importMode === "PDF_EXCEL" ? (
+            <Upload className="w-8 h-8 animate-bounce" style={{ animationDuration: "3s" }} />
+          ) : (
+            <FileText className="w-8 h-8 animate-bounce" style={{ animationDuration: "3s" }} />
+          )}
         </div>
+        
         <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
-          <span>Importador Inteligente Multifuente</span>
-          <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-normal">IA Engine</span>
+          <span>{importMode === "PDF_EXCEL" ? "Importador PDF / Excel (3 Marcas)" : "Importador de Archivos TXT (3 Marcas)"}</span>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-normal border ${
+            importMode === "PDF_EXCEL" 
+              ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-400" 
+              : "bg-amber-500/10 border-amber-500/20 text-amber-400"
+          }`}>
+            {importMode === "PDF_EXCEL" ? "PDF / Excel" : "Texto Plano / Delimitado"}
+          </span>
         </h3>
+        
         <p className="text-sm text-slate-400 mb-6 max-w-md leading-relaxed">
-          Sube los reportes de <strong className="text-slate-200">L'Oréal, Key Full o Wella</strong> en formato <strong className="text-slate-200">Excel, CSV o PDF</strong>. El sistema identificará la marca automáticamente y consolidará el historial.
+          {importMode === "PDF_EXCEL" ? (
+            <>Sube los reportes de <strong className="text-slate-200">L'Oréal, Key Full o Wella</strong> en formato <strong className="text-slate-200">Excel (.xlsx, .xls) o PDF</strong>. El sistema identificará la marca y sincronizará la deuda.</>
+          ) : (
+            <>Sube los reportes en formato de texto plano <strong className="text-slate-200">(.txt, .csv, .tsv)</strong> de cualquiera de las 3 marcas. El motor IA estructurará las columnas y códigos.</>
+          )}
         </p>
         
         <input 
           type="file" 
           id="file-upload" 
-          accept=".xlsx, .xls, .csv, .pdf" 
+          accept={importMode === "PDF_EXCEL" ? ".xlsx, .xls, .pdf" : ".txt, .csv, .tsv"} 
           className="hidden" 
           onChange={handleFileChange}
         />
         <label 
           htmlFor="file-upload" 
-          className="cursor-pointer bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white px-8 py-3 rounded-xl text-sm font-semibold shadow-lg shadow-blue-500/20 transition-all transform active:scale-95 inline-flex items-center gap-2"
+          className={`cursor-pointer text-white px-8 py-3 rounded-xl text-sm font-semibold shadow-lg transition-all transform active:scale-95 inline-flex items-center gap-2 ${
+            importMode === "PDF_EXCEL"
+              ? "bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 shadow-blue-500/20"
+              : "bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 shadow-amber-500/20"
+          }`}
         >
           <Sparkles className="w-4 h-4" />
-          Seleccionar Reporte
+          {importMode === "PDF_EXCEL" ? "Seleccionar Reporte PDF / Excel" : "Seleccionar Archivo TXT"}
         </label>
 
         {file && (
           <div className="mt-6 flex items-center gap-3 bg-slate-900/90 p-3.5 rounded-xl border border-slate-700/80 w-full max-w-md shadow-lg animate-fadeIn">
-            <div className="p-2 bg-blue-500/10 rounded-lg">
-              <FileSpreadsheet className="w-5 h-5 text-blue-400" />
+            <div className={`p-2 rounded-lg ${importMode === "PDF_EXCEL" ? "bg-blue-500/10 text-blue-400" : "bg-amber-500/10 text-amber-400"}`}>
+              {importMode === "PDF_EXCEL" ? <FileSpreadsheet className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
             </div>
             <span className="text-sm font-medium text-slate-200 truncate flex-1 text-left">{file.name}</span>
             <button 
               onClick={handleUpload}
               disabled={isParsing}
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-2 rounded-lg text-sm font-semibold shadow transition-all flex items-center gap-2"
+              className={`text-white px-5 py-2 rounded-lg text-sm font-semibold shadow transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                importMode === "PDF_EXCEL"
+                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500"
+                  : "bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500"
+              }`}
             >
               {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Analizar con IA"}
             </button>

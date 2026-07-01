@@ -39,14 +39,8 @@ function parseExcelNumber(numVal: any): number {
   return 0;
 }
 
-export async function parseExcelAction(formData: FormData): Promise<ParseResult> {
+export async function parseExcelBuffer(buffer: Buffer, fileName: string): Promise<ParseResult> {
   try {
-    const file = formData.get("file") as File;
-    if (!file) throw new Error("No file provided");
-
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    
     const workbook = xlsx.read(buffer, { type: "buffer" });
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
@@ -142,8 +136,8 @@ export async function parseExcelAction(formData: FormData): Promise<ParseResult>
     let currentBrand = "Desconocido";
 
     if (formatType === "LOREAL_KEYFULL") {
-      const fileName = file.name.toUpperCase();
-      if (fileName.includes("KEY") || fileName.includes("KF")) currentBrand = "Key Full";
+      const fileNameUpper = fileName.toUpperCase();
+      if (fileNameUpper.includes("KEY") || fileNameUpper.includes("KF")) currentBrand = "Key Full";
       else currentBrand = "L'Oréal";
 
       let currentClientCode = "";
@@ -312,6 +306,20 @@ export async function parseExcelAction(formData: FormData): Promise<ParseResult>
       clients, 
       rawRowsRead: data.length 
     };
+  } catch (error: any) {
+    console.error("Excel parse error:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function parseExcelAction(formData: FormData): Promise<ParseResult> {
+  try {
+    const file = formData.get("file") as File;
+    if (!file) throw new Error("No file provided");
+
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    return await parseExcelBuffer(buffer, file.name);
   } catch (error: any) {
     console.error("Excel parse error:", error);
     return { success: false, error: error.message };

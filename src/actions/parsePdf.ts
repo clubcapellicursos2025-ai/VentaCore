@@ -119,9 +119,20 @@ export async function parsePdfAction(formData: FormData): Promise<ParseResult> {
         if (invoiceRegex.test(line)) {
           const match = line.match(invoiceRegex);
           if (match) {
-            const rest = match[9].trim().split(/\s+/);
-            let ultPag, vd, obs;
-            if (rest.length > 0) {
+            const rest = match[9].trim().split(/\s+/).filter(Boolean);
+            let ultPag = "", vd = "", obs = "";
+            if (rest.length === 1) {
+              if (rest[0].length === 6 && !isNaN(Number(rest[0]))) ultPag = rest[0];
+              else vd = rest[0];
+            } else if (rest.length === 2) {
+              if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
+                ultPag = rest[0];
+                vd = rest[1];
+              } else {
+                vd = rest[0];
+                obs = rest[1];
+              }
+            } else if (rest.length >= 3) {
               if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
                 ultPag = rest[0];
                 vd = rest[1];
@@ -164,9 +175,20 @@ export async function parsePdfAction(formData: FormData): Promise<ParseResult> {
         else if (invoiceRegexNew.test(line)) {
           const match = line.match(invoiceRegexNew);
           if (match) {
-            const rest = match[8].trim().split(/\s+/);
-            let ultPag, vd, obs;
-            if (rest.length > 0) {
+            const rest = match[8].trim().split(/\s+/).filter(Boolean);
+            let ultPag = "", vd = "", obs = "";
+            if (rest.length === 1) {
+              if (rest[0].length === 6 && !isNaN(Number(rest[0]))) ultPag = rest[0];
+              else vd = rest[0];
+            } else if (rest.length === 2) {
+              if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
+                ultPag = rest[0];
+                vd = rest[1];
+              } else {
+                vd = rest[0];
+                obs = rest[1];
+              }
+            } else if (rest.length >= 3) {
               if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
                 ultPag = rest[0];
                 vd = rest[1];

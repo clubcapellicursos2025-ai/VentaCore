@@ -2,6 +2,8 @@
 
 import { createClient } from "@/utils/supabase/server";
 import type { ParsedClient } from "./importTypes";
+import { getOfficialVendorMatch } from "@/constants/officialVendors";
+import { syncOfficialVendorsAction } from "./vendorActions";
 
 export async function saveImportAction(filename: string, docType: string, clients: ParsedClient[]): Promise<{ success: boolean; jobId?: string; error?: string }> {
   const supabase = await createClient();
@@ -20,6 +22,8 @@ export async function saveImportAction(filename: string, docType: string, client
     } else {
       return { success: false, error: "Compañía no encontrada en el sistema." };
     }
+
+    await syncOfficialVendorsAction().catch(() => {});
 
     const startTime = Date.now();
     let totalAmount = 0;
@@ -53,17 +57,58 @@ export async function saveImportAction(filename: string, docType: string, client
 
     try {
       // 3. Preload all vendors in ONE query
-      const { data: existingVendorsData } = await supabase
+      let { data: existingVendorsData, error: vendorErr }: { data: any[] | null; error: any } = await supabase
         .from('vendors')
-        .select('id, vendor_code')
+        .select('id, vendor_code, brand_codes')
         .eq('company_id', companyId);
 
-      const vendorMap = new Map<string, string>();
-      if (existingVendorsData) {
-        existingVendorsData.forEach(v => {
-          if (v.vendor_code) vendorMap.set(String(v.vendor_code).toUpperCase(), v.id);
-        });
+      if (vendorErr) {
+        console.warn("Fallo al obtener brand_codes en importación (intentando fallback sin brand_codes):", vendorErr.message || vendorErr.details || JSON.stringify(vendorErr));
+        const fb = await supabase
+          .from('vendors')
+          .select('id, vendor_code')
+          .eq('company_id', companyId);
+        existingVendorsData = fb.data ? (fb.data as any[]).map(v => ({ ...v, brand_codes: {} })) : null;
       }
+
+      const vendorMap = new Map<string, string>();
+      const vendorList: any[] = existingVendorsData || [];
+      vendorList.forEach(v => {
+        if (v.vendor_code) vendorMap.set(String(v.vendor_code).toUpperCase(), v.id);
+      });
+
+      const findVendorId = (code: string, brand: string): string | null => {
+        if (!code) return null;
+        const upperCode = String(code).trim().toUpperCase();
+        const cleanCode = !isNaN(Number(upperCode)) && upperCode !== "" ? Number(upperCode).toString() : upperCode;
+        const lowerBrand = (brand || '').toLowerCase();
+
+        // 1. Check brand specific mapping in brand_codes
+        for (const v of vendorList) {
+          if (v.brand_codes && typeof v.brand_codes === 'object') {
+            for (const [bKey, bVal] of Object.entries(v.brand_codes)) {
+              if (lowerBrand.includes(bKey.toLowerCase().split('-')[0].trim()) || bKey.toLowerCase().includes(lowerBrand.split('-')[0].trim())) {
+                if (Array.isArray(bVal) && bVal.some((c: any) => {
+                  const upperC = String(c).trim().toUpperCase();
+                  const cleanC = !isNaN(Number(upperC)) && upperC !== "" ? Number(upperC).toString() : upperC;
+                  return cleanC === cleanCode || upperC === upperCode;
+                })) {
+                  return v.id;
+                }
+              }
+            }
+          }
+        }
+
+        const official = getOfficialVendorMatch(cleanCode, '', brand);
+        if (official) {
+          const matchedId = vendorMap.get(official.code.toUpperCase()) || vendorMap.get(official.code);
+          if (matchedId) return matchedId;
+        }
+
+        // 2. Fallback to general code in vendorMap
+        return vendorMap.get(upperCode) || vendorMap.get(cleanCode) || null;
+      };
 
       let sinVendedorId = vendorMap.get('SIN_VENDEDOR');
       if (!sinVendedorId) {
@@ -76,6 +121,7 @@ export async function saveImportAction(filename: string, docType: string, client
         if (newV) {
           sinVendedorId = newV.id;
           vendorMap.set('SIN_VENDEDOR', newV.id);
+          vendorList.push({ id: newV.id, vendor_code: 'SIN_VENDEDOR', brand_codes: {} });
         }
       }
 
@@ -87,12 +133,14 @@ export async function saveImportAction(filename: string, docType: string, client
 
       const newVendorsToInsert: any[] = [];
       neededVendorCodes.forEach(code => {
-        if (!vendorMap.has(code) && code !== 'SIN_VENDEDOR') {
+        if (!findVendorId(code, docType) && code !== 'SIN_VENDEDOR') {
+          const official = getOfficialVendorMatch(code, '', docType);
           newVendorsToInsert.push({
             company_id: companyId,
-            vendor_code: code,
-            name: 'Vendedor ' + code,
-            status: 'active'
+            vendor_code: official ? official.code : code,
+            name: official ? official.name : ('Vendedor ' + code),
+            status: official ? official.status : 'active',
+            brand_codes: official ? official.brand_codes : {}
           });
         }
       });
@@ -239,7 +287,7 @@ export async function saveImportAction(filename: string, docType: string, client
 
          for (const inv of client.invoices) {
             const vendorCode = inv.vendorCode ? String(inv.vendorCode).toUpperCase() : '';
-            const vendorId = vendorMap.get(vendorCode) || sinVendedorId || null;
+            const vendorId = findVendorId(vendorCode, inv.brand || '') || sinVendedorId || null;
 
             allInvoicesToUpsert.push({
                company_id: companyId,
