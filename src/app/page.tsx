@@ -1,76 +1,145 @@
 import { createClient } from "@/utils/supabase/server";
 import { ClientCharts } from "@/components/features/dashboard/ClientCharts";
-import { format, isPast, isFuture, differenceInDays } from "date-fns";
+import { RadarTable } from "@/components/features/dashboard/RadarTable";
+import { format, differenceInDays } from "date-fns";
 import { es } from "date-fns/locale";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
 
-  // Obtener total de clientes
-  const { count: totalClients } = await supabase
+  // Obtener total de clientes y datos para métricas
+  const { data: clients } = await supabase
     .from('clients')
-    .select('*', { count: 'exact', head: true });
+    .select('id, name');
 
-  // Obtener toda la deuda global relacional
+  const totalClients = clients?.length || 0;
+
+  // Obtener toda la deuda y facturas
   const { data: invoices } = await supabase
     .from('invoices')
     .select(`
+      id,
+      original_amount,
       balance_amount, 
       due_date,
       invoice_number,
+      client_id,
+      vendor_id,
+      origin_brand,
       clients(name),
-      brands(name),
-      vendors(name)
+      vendors(name, vendor_code)
     `);
 
+  const { data: vendors } = await supabase
+    .from('vendors')
+    .select('id, name, vendor_code');
+
+  const totalVendors = vendors?.length || 0;
+
   let globalDebt = 0;
-  let riskClients = 0;
-  const vendorMap = new Map<string, number>();
-  const brandMap = new Map<string, number>();
+  let totalOriginal = 0;
+  let totalPaid = 0;
+  let totalMoraDays = 0;
+  let invoicesWithMoraCount = 0;
+  
+  const clientDebtMap = new Map<string, { name: string; debt: number; hasMora: boolean }>();
+  const vendorDebtMap = new Map<string, number>();
+  const brandDebtMap = new Map<string, number>();
+  const clientVendorMap = new Map<string, string>(); // clientId -> vendorCode
+  
+  let maxPayment = 0;
   let upcomingInvoices: any[] = [];
+  const today = new Date();
 
   if (invoices) {
-    const today = new Date();
-    
     invoices.forEach((inv) => {
-      const balance = Number(inv.balance_amount);
-      globalDebt += balance;
-      
-      const dueDate = new Date(inv.due_date);
-      const daysDiff = differenceInDays(dueDate, today);
+      const balance = Number(inv.balance_amount || 0);
+      const original = Number(inv.original_amount || 0);
+      const paid = original - balance > 0 ? original - balance : 0;
 
-      // Riesgo: Vencido por más de 30 días
-      if (daysDiff < -30) {
-        riskClients++;
+      globalDebt += balance;
+      totalOriginal += original;
+      totalPaid += paid;
+
+      if (paid > maxPayment) {
+        maxPayment = paid;
+      }
+
+      const dueDate = inv.due_date ? new Date(inv.due_date) : today;
+      const daysDiff = differenceInDays(today, dueDate); // positive if past due date (mora)
+      
+      let isMora = false;
+      if (daysDiff > 0 && balance > 0) {
+        isMora = true;
+        totalMoraDays += daysDiff;
+        invoicesWithMoraCount++;
       }
 
       // Próximos a vencer (o vencidos recientemente, e.g. entre -15 y +15 días)
-      if (daysDiff >= -15 && daysDiff <= 15 && balance > 0) {
-        upcomingInvoices.push({ ...inv, daysDiff, dueDate });
+      const diffFromToday = differenceInDays(dueDate, today);
+      if (diffFromToday >= -15 && diffFromToday <= 15 && balance > 0) {
+        upcomingInvoices.push({ ...inv, daysDiff: diffFromToday, dueDate });
+      }
+
+      // Agrupar por Cliente
+      if (inv.client_id) {
+        // @ts-ignore
+        const clientName = inv.clients?.name || "Desconocido";
+        const current = clientDebtMap.get(inv.client_id) || { name: clientName, debt: 0, hasMora: false };
+        current.debt += balance;
+        if (isMora) current.hasMora = true;
+        clientDebtMap.set(inv.client_id, current);
+
+        // Track vendor for client
+        // @ts-ignore
+        const vCode = inv.vendors?.vendor_code || "SIN_VENDEDOR";
+        clientVendorMap.set(inv.client_id, vCode);
       }
 
       // Agrupar por Vendedor
       // @ts-ignore
       const vendorName = inv.vendors?.name || "Sin Vendedor";
-      vendorMap.set(vendorName, (vendorMap.get(vendorName) || 0) + balance);
+      vendorDebtMap.set(vendorName, (vendorDebtMap.get(vendorName) || 0) + balance);
 
-      // Agrupar por Marca
-      // @ts-ignore
-      const brandName = inv.brands?.name || "Otra";
-      brandMap.set(brandName, (brandMap.get(brandName) || 0) + balance);
+      // Agrupar por Marca / Origen
+      const brandName = inv.origin_brand || "Otro";
+      brandDebtMap.set(brandName, (brandDebtMap.get(brandName) || 0) + balance);
     });
   }
 
-  // Ordenar próximos a vencer por fecha (los más urgentes/vencidos primero)
+  // Clientes con Mora y sin Mora
+  let clientsWithMora = 0;
+  let maxDebtor = { name: "Ninguno", debt: 0 };
+  
+  clientDebtMap.forEach((val) => {
+    if (val.hasMora) clientsWithMora++;
+    if (val.debt > maxDebtor.debt) {
+      maxDebtor = val;
+    }
+  });
+
+  const clientsWithoutMora = totalClients - clientsWithMora;
+  const avgMoraDays = invoicesWithMoraCount > 0 ? Math.round(totalMoraDays / invoicesWithMoraCount) : 0;
+
+  // Clientes sin vendedor
+  let clientsWithoutVendor = 0;
+  clients?.forEach(c => {
+    const vCode = clientVendorMap.get(c.id);
+    if (!vCode || vCode === 'SIN_VENDEDOR' || vCode === 'unassigned') {
+      clientsWithoutVendor++;
+    }
+  });
+
+  // Ordenar próximos a vencer por fecha
   upcomingInvoices.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
 
   // Preparar datos para Recharts
-  const vendorData = Array.from(vendorMap.entries())
+  const vendorData = Array.from(vendorDebtMap.entries())
     .map(([name, debt]) => ({ name, debt }))
     .sort((a, b) => b.debt - a.debt)
-    .slice(0, 10); // Top 10 vendedores
+    .slice(0, 10);
 
-  const brandData = Array.from(brandMap.entries())
+  const brandData = Array.from(brandDebtMap.entries())
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value);
 
@@ -78,26 +147,61 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard General</h1>
-          <p className="text-slate-400 mt-1">Inteligencia comercial cruzada (Vendedores, Marcas y Clientes).</p>
+          <h1 className="text-2xl font-bold tracking-tight">Dashboard Ejecutivo</h1>
+          <p className="text-slate-400 mt-1">Inteligencia comercial cruzada (L'Oréal, Key Full y Wella).</p>
         </div>
       </div>
       
-      {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg shadow-slate-900/50">
-          <h3 className="text-sm font-medium text-slate-400">Total Clientes Activos</h3>
-          <p className="text-3xl font-bold mt-2 text-white">{totalClients || 0}</p>
+      {/* KPIs Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Total Clientes</h3>
+          <p className="text-2xl font-bold mt-1 text-white">{totalClients}</p>
         </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg shadow-slate-900/50">
-          <h3 className="text-sm font-medium text-slate-400">Deuda Global en Calle</h3>
-          <p className="text-3xl font-bold mt-2 text-emerald-400">
-            ${globalDebt.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Total Facturas</h3>
+          <p className="text-2xl font-bold mt-1 text-white">{invoices?.length || 0}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Deuda Global en Calle</h3>
+          <p className="text-2xl font-bold mt-1 text-emerald-400">
+            ${globalDebt.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
           </p>
         </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg shadow-slate-900/50">
-          <h3 className="text-sm font-medium text-slate-400">Facturas Alto Riesgo (&gt;30 días)</h3>
-          <p className="text-3xl font-bold mt-2 text-rose-500">{riskClients}</p>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Total Cobrado / Aplicado</h3>
+          <p className="text-2xl font-bold mt-1 text-blue-400">
+            ${totalPaid.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+          </p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Clientes con Mora</h3>
+          <p className="text-2xl font-bold mt-1 text-rose-500">{clientsWithMora}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Clientes sin Mora</h3>
+          <p className="text-2xl font-bold mt-1 text-emerald-500">{clientsWithoutMora}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Promedio de Mora</h3>
+          <p className="text-2xl font-bold mt-1 text-amber-400">{avgMoraDays} días</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Mayor Deudor</h3>
+          <p className="text-lg font-bold mt-1 text-white truncate" title={maxDebtor.name}>{maxDebtor.name}</p>
+          <p className="text-xs text-rose-400">${maxDebtor.debt.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Mayor Pago Aplicado</h3>
+          <p className="text-2xl font-bold mt-1 text-emerald-400">${maxPayment.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h3 className="text-xs font-medium text-slate-400">Vendedores Registrados</h3>
+          <p className="text-2xl font-bold mt-1 text-white">{totalVendors}</p>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg col-span-2">
+          <h3 className="text-xs font-medium text-slate-400">Clientes sin Vendedor Asignado</h3>
+          <p className="text-2xl font-bold mt-1 text-amber-500">{clientsWithoutVendor}</p>
         </div>
       </div>
 
@@ -105,61 +209,7 @@ export default async function DashboardPage() {
       <ClientCharts vendorData={vendorData} brandData={brandData} />
 
       {/* Aging Report (Próximos a Vencer) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg mt-6">
-        <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/50">
-          <h3 className="font-semibold text-white">Radar de Cobranza (± 15 días)</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-950/80">
-              <tr>
-                <th className="px-6 py-3 font-medium text-slate-400">Cliente</th>
-                <th className="px-6 py-3 font-medium text-slate-400">Factura</th>
-                <th className="px-6 py-3 font-medium text-slate-400">Vendedor</th>
-                <th className="px-6 py-3 font-medium text-slate-400">Vencimiento</th>
-                <th className="px-6 py-3 font-medium text-slate-400 text-right">Saldo</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {upcomingInvoices.slice(0, 8).map((inv, idx) => (
-                <tr key={idx} className="hover:bg-slate-800/50 transition-colors">
-                  <td className="px-6 py-3 font-medium text-slate-200">
-                    {/* @ts-ignore */}
-                    {inv.clients?.name || "Desconocido"}
-                  </td>
-                  <td className="px-6 py-3 text-slate-400 font-mono text-xs">
-                    {inv.invoice_number}
-                  </td>
-                  <td className="px-6 py-3 text-slate-400">
-                    {/* @ts-ignore */}
-                    {inv.vendors?.name || "-"}
-                  </td>
-                  <td className="px-6 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className={inv.daysDiff < 0 ? "text-rose-400 font-medium" : "text-amber-400 font-medium"}>
-                        {format(inv.dueDate, "dd MMM yyyy", { locale: es })}
-                      </span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                        {inv.daysDiff < 0 ? `hace ${Math.abs(inv.daysDiff)} días` : `en ${inv.daysDiff} días`}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-3 font-medium text-right text-emerald-400">
-                    ${Number(inv.balance_amount).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
-                </tr>
-              ))}
-              {upcomingInvoices.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
-                    No hay facturas en el radar de cobranza cercano.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <RadarTable invoices={upcomingInvoices} />
     </div>
   );
 }

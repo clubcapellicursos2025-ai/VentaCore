@@ -1,128 +1,296 @@
 "use server";
 
 import { createClient } from "@/utils/supabase/server";
-import type { ParsedClient } from "./parsePdf";
+import type { ParsedClient } from "./importTypes";
 
-export async function saveImportAction(filename: string, clients: ParsedClient[]) {
+export async function saveImportAction(filename: string, docType: string, clients: ParsedClient[]): Promise<{ success: boolean; jobId?: string; error?: string }> {
   const supabase = await createClient();
   
-  // 1. Get authenticated user
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError || !user) {
-    throw new Error("No estás autenticado.");
-  }
+  try {
+    // 1. Get authenticated user
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return { success: false, error: "No estás autenticado en el sistema." };
+    }
 
-  let companyId: string;
-  const { data: existingCompany } = await supabase.from('companies').select('id').limit(1);
-  
-  if (existingCompany && existingCompany.length > 0) {
-    companyId = existingCompany[0].id;
-  } else {
-    const { data: newCompany, error: compErr } = await supabase.from('companies').insert({ name: 'VentaCore Demo Tenant' }).select('id');
-    if (compErr || !newCompany) throw new Error("Error creando compañía: " + (compErr?.message || "Desconocido"));
-    companyId = newCompany[0].id;
-  }
+    let companyId: string;
+    const { data: existingCompany } = await supabase.from('companies').select('id').limit(1);
+    if (existingCompany && existingCompany.length > 0) {
+      companyId = existingCompany[0].id;
+    } else {
+      return { success: false, error: "Compañía no encontrada en el sistema." };
+    }
 
-  // Ensure user exists in public.users to satisfy foreign key in import_jobs
-  const { data: existingUser } = await supabase.from('users').select('id').eq('id', user.id).limit(1);
-  if (!existingUser || existingUser.length === 0) {
-     const { error: userErr } = await supabase.from('users').insert({
-       id: user.id,
-       company_id: companyId,
-       email: user.email,
-       full_name: 'Administrador Demo',
-       role: 'admin'
-     });
-     if (userErr) throw new Error("Error registrando usuario interno: " + userErr.message);
-  }
+    const startTime = Date.now();
+    let totalAmount = 0;
+    let totalBalance = 0;
+    let totalInvoices = 0;
 
-  // Flatten the invoices to count total records
-  const totalInvoices = clients.reduce((acc, c) => acc + c.invoices.length, 0);
+    clients.forEach(c => {
+      totalInvoices += c.invoices.length;
+      c.invoices.forEach(inv => {
+        totalAmount += inv.originalAmount;
+        totalBalance += inv.balanceAmount;
+      });
+    });
 
-  // 2. Crear Import Job
-  const { data: job, error: jobError } = await supabase.from("import_jobs").insert({
-    company_id: companyId,
-    user_id: user.id,
-    filename: filename,
-    status: "processing",
-    total_records: totalInvoices
-  }).select("id").single();
-
-  if (jobError || !job) {
-    console.error("Job Error", jobError);
-    throw new Error("No se pudo inicializar la importación.");
-  }
-
-  // 3. Preparar los registros para Staging
-  const stagingData = clients.flatMap(client => 
-    client.invoices.map(inv => ({
-      import_job_id: job.id,
+    // 2. Crear Import Job
+    const { data: job, error: jobError } = await supabase.from("import_jobs").insert({
       company_id: companyId,
-      raw_brand: inv.brand,
-      raw_vendor_code: inv.vendorCode,
-      raw_client_code: client.code,
-      raw_client_name: client.name,
-      raw_client_identifier: client.identifier,
-      raw_client_locality: client.locality,
-      raw_client_address: client.address,
-      raw_invoice_number: inv.invoiceNumber,
-      raw_issue_date: inv.issueDate,
-      raw_due_date: inv.dueDate, 
-      // Replace commas with dots for numeric parsing in Postgres
-      raw_original_amount: parseFloat(inv.originalAmount.replace('.', '').replace(',', '.')),
-      raw_balance_amount: parseFloat(inv.balanceAmount.replace('.', '').replace(',', '.')),
-      processing_status: 'valid',
-      action_required: 'insert'
-    }))
-  );
+      user_id: user.id,
+      filename: filename,
+      doc_type: docType,
+      status: "processing",
+      total_clients: clients.length,
+      total_invoices: totalInvoices,
+      total_amount: totalAmount,
+      total_balance: totalBalance
+    }).select("id").single();
 
-  // Fix date formats
-  const sanitizeDate = (dateStr: string) => {
-    if (!dateStr) return dateStr;
-    // If it's DD/MM/YY, convert to YYYY-MM-DD
-    const parts = dateStr.split("/");
-    if (parts.length === 3) {
-      let year = parseInt(parts[2]);
-      if (year < 100) year += 2000;
-      return `${year}-${parts[1]}-${parts[0]}`;
+    if (jobError || !job) {
+      return { success: false, error: `No se pudo inicializar la importación (Verifica haber ejecutado las migraciones SQL en Supabase): ${jobError?.message}` };
     }
-    // If it's DDMMYY (length 6, no slashes), convert to YYYY-MM-DD
-    if (dateStr.length === 6 && !dateStr.includes("/")) {
-       const d = dateStr.substring(0, 2);
-       const m = dateStr.substring(2, 4);
-       let y = parseInt(dateStr.substring(4, 6));
-       if (y < 100) y += 2000;
-       return `${y}-${m}-${d}`;
+
+    try {
+      // 3. Preload all vendors in ONE query
+      const { data: existingVendorsData } = await supabase
+        .from('vendors')
+        .select('id, vendor_code')
+        .eq('company_id', companyId);
+
+      const vendorMap = new Map<string, string>();
+      if (existingVendorsData) {
+        existingVendorsData.forEach(v => {
+          if (v.vendor_code) vendorMap.set(String(v.vendor_code).toUpperCase(), v.id);
+        });
+      }
+
+      let sinVendedorId = vendorMap.get('SIN_VENDEDOR');
+      if (!sinVendedorId) {
+        const { data: newV } = await supabase.from('vendors').insert({
+          company_id: companyId,
+          vendor_code: 'SIN_VENDEDOR',
+          name: 'PENDIENTE DE ASIGNACIÓN',
+          status: 'unassigned'
+        }).select('id').single();
+        if (newV) {
+          sinVendedorId = newV.id;
+          vendorMap.set('SIN_VENDEDOR', newV.id);
+        }
+      }
+
+      // Collect and bulk insert new vendors
+      const neededVendorCodes = new Set<string>();
+      clients.forEach(c => c.invoices.forEach(inv => {
+        if (inv.vendorCode) neededVendorCodes.add(String(inv.vendorCode).toUpperCase());
+      }));
+
+      const newVendorsToInsert: any[] = [];
+      neededVendorCodes.forEach(code => {
+        if (!vendorMap.has(code) && code !== 'SIN_VENDEDOR') {
+          newVendorsToInsert.push({
+            company_id: companyId,
+            vendor_code: code,
+            name: 'Vendedor ' + code,
+            status: 'active'
+          });
+        }
+      });
+
+      if (newVendorsToInsert.length > 0) {
+        for (let i = 0; i < newVendorsToInsert.length; i += 100) {
+          const chunk = newVendorsToInsert.slice(i, i + 100);
+          const { data: insertedVendors } = await supabase.from('vendors').insert(chunk).select('id, vendor_code');
+          if (insertedVendors) {
+            insertedVendors.forEach(v => {
+              if (v.vendor_code) vendorMap.set(String(v.vendor_code).toUpperCase(), v.id);
+            });
+          }
+        }
+      }
+
+      // 4. Process clients & consolidate
+      const { data: existingClientsData } = await supabase
+        .from('clients')
+        .select('id, client_code, name, dni, cuit_cuil, origin_codes, address');
+      
+      let existingClients = existingClientsData || [];
+      
+      // Track which clients need to be created vs updated
+      const clientsToCreate: (ParsedClient & { _tempIndex: number })[] = [];
+      const clientAssignedIds = new Map<number, string>();
+
+      for (let idx = 0; idx < clients.length; idx++) {
+        const client = clients[idx];
+        let matchedClient = null;
+        
+        // 1. CUIT/CUIL
+        if (client.cuitCuil) {
+          matchedClient = existingClients.find(c => c.cuit_cuil === client.cuitCuil);
+        }
+        // 2. DNI
+        if (!matchedClient && client.dni) {
+          matchedClient = existingClients.find(c => c.dni === client.dni);
+        }
+        // 3. Code
+        if (!matchedClient && client.code) {
+          matchedClient = existingClients.find(c => {
+             if (c.client_code === client.code) return true;
+             if (c.origin_codes && Array.isArray(c.origin_codes)) {
+                return c.origin_codes.includes(client.code);
+             }
+             return false;
+          });
+        }
+        // 4. Name + Address
+        if (!matchedClient) {
+          matchedClient = existingClients.find(c => 
+             c.name.toLowerCase() === client.name.toLowerCase() && 
+             c.address?.toLowerCase() === client.address.toLowerCase()
+          );
+        }
+
+        if (matchedClient) {
+          const clientId = matchedClient.id;
+          clientAssignedIds.set(idx, clientId);
+          
+          const codes = Array.isArray(matchedClient.origin_codes) ? matchedClient.origin_codes : [];
+          let needsUpdate = false;
+          let updatePayload: any = {};
+          
+          if (client.code && !codes.includes(client.code)) {
+             codes.push(client.code);
+             updatePayload.origin_codes = codes;
+             needsUpdate = true;
+          }
+          if (client.dni && !matchedClient.dni) {
+             updatePayload.dni = client.dni;
+             needsUpdate = true;
+          }
+          if (client.cuitCuil && !matchedClient.cuit_cuil) {
+             updatePayload.cuit_cuil = client.cuitCuil;
+             needsUpdate = true;
+          }
+          
+          if (needsUpdate) {
+             await supabase.from('clients').update(updatePayload).eq('id', clientId);
+             matchedClient.origin_codes = codes;
+             if (updatePayload.dni) matchedClient.dni = updatePayload.dni;
+             if (updatePayload.cuit_cuil) matchedClient.cuit_cuil = updatePayload.cuit_cuil;
+          }
+        } else {
+          clientsToCreate.push({ ...client, _tempIndex: idx });
+        }
+      }
+
+      // Bulk insert new clients
+      if (clientsToCreate.length > 0) {
+        const createPayload = clientsToCreate.map(c => ({
+           company_id: companyId,
+           client_code: c.code,
+           name: c.name,
+           dni: c.dni || null,
+           cuit_cuil: c.cuitCuil || null,
+           origin_codes: [c.code],
+           locality: c.locality,
+           address: c.address
+        }));
+
+        for (let i = 0; i < createPayload.length; i += 100) {
+          const chunk = createPayload.slice(i, i + 100);
+          const chunkClients = clientsToCreate.slice(i, i + 100);
+          
+          const { data: newClients, error: clientErr } = await supabase
+             .from('clients')
+             .insert(chunk)
+             .select('id, client_code, name');
+          
+          if (clientErr) {
+            throw new Error(`Error al insertar nuevos clientes en base de datos: ${clientErr.message}`);
+          }
+          
+          if (newClients) {
+            newClients.forEach((nc, ncIdx) => {
+               const origClient = chunkClients[ncIdx];
+               if (origClient && nc.id) {
+                 clientAssignedIds.set(origClient._tempIndex, nc.id);
+                 existingClients.push({
+                   id: nc.id,
+                   client_code: nc.client_code,
+                   name: nc.name,
+                   dni: origClient.dni || null,
+                   cuit_cuil: origClient.cuitCuil || null,
+                   origin_codes: [nc.client_code],
+                   address: origClient.address
+                 });
+               }
+            });
+          }
+        }
+      }
+
+      // 5. Bulk prepare & upsert Invoices
+      const allInvoicesToUpsert: any[] = [];
+      
+      for (let idx = 0; idx < clients.length; idx++) {
+         const client = clients[idx];
+         const clientId = clientAssignedIds.get(idx);
+         if (!clientId) continue;
+
+         for (const inv of client.invoices) {
+            const vendorCode = inv.vendorCode ? String(inv.vendorCode).toUpperCase() : '';
+            const vendorId = vendorMap.get(vendorCode) || sinVendedorId || null;
+
+            allInvoicesToUpsert.push({
+               company_id: companyId,
+               client_id: clientId,
+               import_job_id: job.id,
+               origin_brand: inv.brand || 'S/M',
+               vendor_id: vendorId,
+               invoice_number: inv.invoiceNumber,
+               invoice_type: inv.invoiceType || 'Factura',
+               issue_date: inv.issueDate || null,
+               due_date: inv.dueDate || null,
+               original_amount: inv.originalAmount,
+               balance_amount: inv.balanceAmount,
+               observations: inv.observations || null,
+               internal_code: inv.internalCode || null,
+               internal_indicator: inv.internalIndicator || null,
+               is_active: true,
+               updated_at: new Date().toISOString()
+            });
+         }
+      }
+
+      // Upsert in chunks of 200
+      for (let i = 0; i < allInvoicesToUpsert.length; i += 200) {
+         const chunk = allInvoicesToUpsert.slice(i, i + 200);
+         const { error: invErr } = await supabase.from('invoices').upsert(chunk, {
+            onConflict: 'company_id,client_id,invoice_number,origin_brand'
+         });
+         if (invErr) {
+            throw new Error(`Error al guardar facturas (Verifica haber ejecutado el SQL en Supabase para tener la columna origin_brand y el índice único): ${invErr.message}`);
+         }
+      }
+
+      const durationMs = Date.now() - startTime;
+      await supabase.from("import_jobs").update({ 
+        status: "completed",
+        processing_time_ms: durationMs,
+        completed_at: new Date().toISOString()
+      }).eq("id", job.id);
+
+      return { success: true, jobId: job.id };
+
+    } catch (error: any) {
+      await supabase.from("import_jobs").update({ 
+         status: "failed", 
+         errors: [{ message: error?.message || String(error) }] 
+      }).eq("id", job.id);
+      return { success: false, error: error?.message || String(error) };
     }
-    return dateStr;
-  };
-
-  const cleanStagingData = stagingData.map(d => ({
-    ...d,
-    raw_issue_date: sanitizeDate(d.raw_issue_date),
-    raw_due_date: sanitizeDate(d.raw_due_date)
-  }));
-
-  // 4. Insertar masivamente en staging_records
-  const { error: stagingError } = await supabase.from("staging_records").insert(cleanStagingData);
-
-  if (stagingError) {
-    console.error("Staging Error", stagingError);
-    // Cambiar estado a fallido
-    await supabase.from("import_jobs").update({ status: "failed" }).eq("id", job.id);
-    throw new Error("No se pudieron insertar los registros de staging.");
+  } catch (outerError: any) {
+    console.error("Fatal save import error:", outerError);
+    return { success: false, error: outerError?.message || String(outerError) };
   }
-
-  // 5. Ejecutar la Función RPC que comitea de staging a las tablas reales
-  const { error: rpcError } = await supabase.rpc("commit_import_job", {
-    job_id: job.id
-  });
-
-  if (rpcError) {
-    console.error("RPC Error", rpcError);
-    await supabase.from("import_jobs").update({ status: "failed" }).eq("id", job.id);
-    throw new Error("Fallo en la consolidación del motor (commit_import_job).");
-  }
-
-  return { success: true, jobId: job.id };
 }

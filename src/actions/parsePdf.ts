@@ -6,30 +6,39 @@ if (typeof global.DOMMatrix === 'undefined') {
 
 const pdfParse = require("pdf-parse");
 
-export type ParsedInvoice = {
-  brand: string;
-  mora: string;
-  dueDate: string;
-  invoiceNumber: string;
-  issueDate: string;
-  originalAmount: string;
-  paymentAmount: string;
-  balanceAmount: string;
-  lastPaymentDate?: string;
-  vendorCode?: string;
-  observations?: string;
-};
+import type { ParseResult, ParsedClient, ParsedInvoice } from "./importTypes";
+import { differenceInDays } from "date-fns";
 
-export type ParsedClient = {
-  name: string;
-  code: string;
-  locality: string;
-  address: string;
-  identifier?: string;
-  invoices: ParsedInvoice[];
-};
+// Helper to parse dates from PDF strings (DD/MM/YY or DDMMYY or YYYY-MM-DD)
+function parsePdfDate(val?: string): string {
+  if (!val) return "";
+  const cleaned = val.replace(/[^\d/]/g, "");
+  if (cleaned.includes("/")) {
+    const parts = cleaned.split("/");
+    if (parts.length === 3) {
+      let yy = parts[2];
+      if (yy.length === 2) yy = "20" + yy;
+      return `${yy}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  } else if (cleaned.length === 6) {
+    const dd = cleaned.slice(0, 2);
+    const mm = cleaned.slice(2, 4);
+    let yy = cleaned.slice(4, 6);
+    yy = "20" + yy;
+    return `${yy}-${mm}-${dd}`;
+  }
+  return val;
+}
 
-export async function parsePdfAction(formData: FormData) {
+// Helper to parse numbers safely
+function parsePdfNumber(strVal?: string): number {
+  if (!strVal) return 0;
+  const cleaned = strVal.replace(/[^\d.,-]/g, "").replace(",", ".");
+  const parsed = parseFloat(cleaned);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+export async function parsePdfAction(formData: FormData): Promise<ParseResult> {
   try {
     const file = formData.get("file") as File;
     if (!file) throw new Error("No file provided");
@@ -42,77 +51,76 @@ export async function parsePdfAction(formData: FormData) {
     const text = data.text;
     
     const lines = text.split("\n").map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+    if (lines.length === 0) throw new Error("El archivo PDF está vacío o no se pudo leer el texto.");
     
     const clients: ParsedClient[] = [];
     let currentClient: ParsedClient | null = null;
     
-    // Regex for the client header line.
-    // Example: PEREZ BARBARA INES 10001 S.M. TUCUMAN Buenos Aires 85 * 24622154/ 27246221540
-    // Example: BARRIONUEVO MYRIAM EV10024 S.M. TUCUMAN Monteagudo 747 Local 1 * 23178775/ 27231787750
-    // Example: ARREGUEZ FATIMA 10035 S.M. TUCUMAN ITALIA 1426 * 25214882/ 0
-    // Example: CANEPA ANDREA CECILIA10025 S.M. TUCUMAN            Salta 137 Local 1 * 23015943/ 27230159438 (no space before code)
     const clientHeaderRegex = /^(.+?)\s*(\d{5})\s+(.+?)\s+([A-Za-z0-9\s.]+?)\s*\*\s*([\d/]+)?(?:\s+0)?$/;
-
-    // Regex for the invoice line.
-    // Wella (0012) 10/06/26 A08000013 18/06/26 152134,66 0,00 152134,66 4 00
-    // Farmavi *(PAG ) 05/09/25 A08041804 06/08/25 109048,83 110000,00 -951,17 301025 1 30
     const invoiceRegex = /^([A-Za-z]+)\s+(\*?\([\w\s]+\))\s+(\d{2}\/\d{2}\/\d{2})\s+([A-Za-z0-9]+)\s+(\d{2}\/\d{2}\/\d{2})\s+([\d.,-]+)\s+([\d.,-]+)\s+([\d.,-]+)(.*)$/;
-
-    // (055) 230526 A08045176 080526 7.494,06 0,00 7.494,06 3
-    // *(119) 040426 02045813 050326 474.412,72 473.842,84 569,88 190526 3
     const invoiceRegexNew = /^(\*?\(\d{3}\))\s+(\d{6})\s+([A-Za-z0-9]+)\s+(\d{6})\s+([\d.,-]+)\s+([\d.,-]+)\s+([\d.,-]+)\s*(.*)$/;
 
     for (const line of lines) {
-      // Check if it's a client header
-      // We look for "* " which usually denotes the start of the identifier
       if (line.includes("* ") && !line.startsWith("Wella") && !line.startsWith("Sow") && !line.startsWith("Farmavi") && !line.startsWith("Loreal") && !line.startsWith("Matrix")) {
-        // Try to parse client
         const match = line.match(clientHeaderRegex);
+        let name = "", code = "", locality = "", address = "", idStr = "";
+
         if (match) {
-          if (currentClient) {
-            clients.push(currentClient);
-          }
-          currentClient = {
-            name: match[1].trim(),
-            code: match[2].trim(),
-            locality: match[3].trim(),
-            address: match[4].trim(),
-            identifier: match[5] ? match[5].trim() : undefined,
-            invoices: []
-          };
+          name = match[1].trim();
+          code = match[2].trim();
+          locality = match[3].trim();
+          address = match[4].trim();
+          idStr = match[5] ? match[5].trim() : "";
         } else {
-          // Fallback parsing if regex fails but it looks like a client
           const parts = line.split("*");
           if (parts.length >= 2) {
              const leftPart = parts[0].trim();
              const codeMatch = leftPart.match(/(\d{5})/);
              if (codeMatch) {
-                if (currentClient) clients.push(currentClient);
-                const code = codeMatch[1];
+                code = codeMatch[1];
                 const codeIndex = leftPart.indexOf(code);
-                currentClient = {
-                  name: leftPart.substring(0, codeIndex).trim(),
-                  code: code,
-                  locality: "UNKNOWN",
-                  address: leftPart.substring(codeIndex + 5).trim(),
-                  identifier: parts[1].trim(),
-                  invoices: []
-                };
+                name = leftPart.substring(0, codeIndex).trim();
+                locality = "UNKNOWN";
+                address = leftPart.substring(codeIndex + 5).trim();
+                idStr = parts[1].trim();
              }
           }
         }
-      } 
-      // Check if it's an invoice line
-      else if (currentClient) {
-        let parsedInvoice = null;
 
-        // Try original format
+        if (code) {
+          if (currentClient) clients.push(currentClient);
+
+          let dni = "";
+          let cuitCuil = "";
+          if (idStr) {
+            const parts = idStr.split(/[\s/|-]+/);
+            for (const p of parts) {
+              const clean = p.replace(/\D/g, "");
+              if (clean.length >= 10 && clean.length <= 11) cuitCuil = clean;
+              else if (clean.length >= 7 && clean.length <= 9) dni = clean;
+            }
+          }
+
+          currentClient = {
+            code,
+            name,
+            dni,
+            cuitCuil,
+            identifier: idStr || cuitCuil || dni,
+            locality,
+            address,
+            invoices: []
+          };
+        }
+      } 
+      else if (currentClient) {
+        let parsedInvoice: ParsedInvoice | null = null;
+
         if (invoiceRegex.test(line)) {
           const match = line.match(invoiceRegex);
           if (match) {
             const rest = match[9].trim().split(/\s+/);
             let ultPag, vd, obs;
-            
             if (rest.length > 0) {
               if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
                 ultPag = rest[0];
@@ -123,28 +131,41 @@ export async function parsePdfAction(formData: FormData) {
                 obs = rest.slice(1).join(" ");
               }
             }
+            
+            const originalAmount = parsePdfNumber(match[6]);
+            const paymentAmount = parsePdfNumber(match[7]);
+            const balanceAmount = parsePdfNumber(match[8]);
+            const issueDate = parsePdfDate(match[3]);
+            const dueDate = parsePdfDate(match[5]);
+            
+            let mora = 0;
+            if (balanceAmount > 0 && dueDate) {
+               mora = differenceInDays(new Date(), new Date(dueDate));
+               if (mora < 0) mora = 0;
+            }
+
             parsedInvoice = {
               brand: match[1],
-              mora: match[2],
-              dueDate: match[3],
+              invoiceType: "Factura",
               invoiceNumber: match[4],
-              issueDate: match[5],
-              originalAmount: match[6],
-              paymentAmount: match[7],
-              balanceAmount: match[8],
-              lastPaymentDate: ultPag,
+              issueDate,
+              dueDate,
+              mora,
+              originalAmount,
+              paymentAmount,
+              creditNoteAmount: 0,
+              balanceAmount,
+              lastPaymentDate: parsePdfDate(ultPag),
               vendorCode: vd,
               observations: obs
             };
           }
         } 
-        // Try new format (without brand, dates as DDMMYY)
         else if (invoiceRegexNew.test(line)) {
           const match = line.match(invoiceRegexNew);
           if (match) {
             const rest = match[8].trim().split(/\s+/);
             let ultPag, vd, obs;
-            
             if (rest.length > 0) {
               if (rest[0].length === 6 && !isNaN(Number(rest[0]))) {
                 ultPag = rest[0];
@@ -155,16 +176,31 @@ export async function parsePdfAction(formData: FormData) {
                 obs = rest.slice(1).join(" ");
               }
             }
+            
+            const originalAmount = parsePdfNumber(match[5]);
+            const paymentAmount = parsePdfNumber(match[6]);
+            const balanceAmount = parsePdfNumber(match[7]);
+            const issueDate = parsePdfDate(match[2]);
+            const dueDate = parsePdfDate(match[4]);
+
+            let mora = 0;
+            if (balanceAmount > 0 && dueDate) {
+               mora = differenceInDays(new Date(), new Date(dueDate));
+               if (mora < 0) mora = 0;
+            }
+
             parsedInvoice = {
-              brand: "S/M", // Sin Marca (brand no viene en este formato)
-              mora: match[1],
-              dueDate: match[2],
+              brand: "Wella / Farmavi",
+              invoiceType: "Factura",
               invoiceNumber: match[3],
-              issueDate: match[4],
-              originalAmount: match[5],
-              paymentAmount: match[6],
-              balanceAmount: match[7],
-              lastPaymentDate: ultPag,
+              issueDate,
+              dueDate,
+              mora,
+              originalAmount,
+              paymentAmount,
+              creditNoteAmount: 0,
+              balanceAmount,
+              lastPaymentDate: parsePdfDate(ultPag),
               vendorCode: vd,
               observations: obs
             };
@@ -181,7 +217,14 @@ export async function parsePdfAction(formData: FormData) {
       clients.push(currentClient);
     }
 
-    return { success: true, clients, rawLinesRead: lines.length };
+    const validClients = clients.filter(c => c.invoices.length > 0);
+
+    return { 
+      success: true, 
+      brandDetected: "Wella / Farmavi (PDF)", 
+      clients: validClients, 
+      rawRowsRead: lines.length 
+    };
   } catch (error: any) {
     console.error("PDF parse error:", error);
     return { success: false, error: error.message };

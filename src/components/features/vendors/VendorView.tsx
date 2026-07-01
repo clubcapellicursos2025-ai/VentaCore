@@ -4,6 +4,7 @@ import { es } from "date-fns/locale";
 import { Users, Receipt, AlertTriangle, TrendingUp, Clock, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 import { VendorCharts } from "./VendorCharts";
+import { VendorInvoicesTable } from "./VendorInvoicesTable";
 
 export async function VendorView({ vendorId }: { vendorId: string }) {
   const supabase = await createClient();
@@ -20,6 +21,7 @@ export async function VendorView({ vendorId }: { vendorId: string }) {
         issue_date,
         due_date,
         balance_amount,
+        origin_brand,
         clients (
           id,
           name,
@@ -78,7 +80,7 @@ export async function VendorView({ vendorId }: { vendorId: string }) {
       clientName,
       clientId: inv.clients?.id,
       clientCode: inv.clients?.client_code,
-      brandName: inv.brands?.name || "-"
+      brandName: inv.origin_brand || inv.brands?.name || "-"
     };
   }).sort((a, b) => {
     // Ordenar primero por días de atraso (mayor atraso primero)
@@ -137,80 +139,7 @@ export async function VendorView({ vendorId }: { vendorId: string }) {
       <VendorCharts data={chartData} />
 
       {/* Action Grid (Prioridad de Cobranza) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
-          <div>
-            <h3 className="font-medium flex items-center gap-2 text-white">
-              <AlertTriangle className="w-4 h-4 text-amber-500" />
-              Prioridad de Cobranza
-            </h3>
-            <p className="text-xs text-slate-500 mt-1">
-              Lista ordenada automáticamente priorizando facturas con mayor atraso y mayor monto.
-            </p>
-          </div>
-        </div>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-950/80">
-              <tr>
-                <th className="px-4 py-3 font-medium text-slate-400">Cliente</th>
-                <th className="px-4 py-3 font-medium text-slate-400">Comprobante</th>
-                <th className="px-4 py-3 font-medium text-slate-400">Marca</th>
-                <th className="px-4 py-3 font-medium text-slate-400">Vencimiento</th>
-                <th className="px-4 py-3 font-medium text-slate-400">Estado</th>
-                <th className="px-4 py-3 font-medium text-slate-400 text-right">Saldo a Cobrar</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {processedInvoices.map((inv: any) => (
-                <tr key={inv.id} className={`hover:bg-slate-800/50 transition-colors ${inv.overdueDays > 15 ? 'bg-red-500/5' : ''}`}>
-                  <td className="px-4 py-3">
-                    <Link href={`/clients/${inv.clientId}`} className="font-medium text-slate-200 hover:text-emerald-400 transition-colors">
-                      {inv.clientName}
-                    </Link>
-                    <div className="text-xs text-slate-500 font-mono mt-1">Cód: {inv.clientCode}</div>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-slate-300 text-xs">{inv.invoice_number}</td>
-                  <td className="px-4 py-3 text-slate-400">{inv.brandName}</td>
-                  <td className="px-4 py-3 text-slate-400">
-                    {format(inv.dueDate, "dd MMM yyyy", { locale: es })}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-col gap-1">
-                      {inv.overdueDays > 0 ? (
-                        <span className="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
-                          <Clock className="w-3 h-3" />
-                          {inv.overdueDays} d. mora
-                        </span>
-                      ) : (
-                        <span className="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          <CheckCircle2 className="w-3 h-3" />
-                          {inv.daysToDue > 0 ? `A vencer en ${inv.daysToDue} d.` : `Vence hoy`}
-                        </span>
-                      )}
-                      <span className="text-xs text-slate-400">
-                        {inv.ageDays} d. desde emisión
-                      </span>
-                    </div>
-                  </td>
-                  <td className={`px-4 py-3 text-right font-medium ${inv.overdueDays > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                    {formatCurrency(inv.balance)}
-                  </td>
-                </tr>
-              ))}
-              
-              {processedInvoices.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                    Este vendedor no tiene facturas pendientes de cobro asignadas.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <VendorInvoicesTable invoices={processedInvoices} />
     </div>
   );
 }

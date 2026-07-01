@@ -36,7 +36,7 @@ export function ClientSearchInput() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         className="bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg focus:ring-emerald-500 focus:border-emerald-500 block w-full pl-10 p-2.5 outline-none"
-        placeholder="Buscar cliente por nombre..."
+        placeholder="Buscar por DNI, CUIT, código o nombre..."
       />
     </div>
   );

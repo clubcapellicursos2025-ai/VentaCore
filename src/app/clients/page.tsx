@@ -1,6 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
-import Link from "next/link";
 import { ClientSearchInput } from "@/components/features/search/ClientSearchInput";
+import { ClientsTable } from "@/components/features/clients/ClientsTable";
+import { differenceInDays } from "date-fns";
 
 export default async function ClientsPage(props: { searchParams: Promise<{ q?: string }> }) {
   const searchParams = await props.searchParams;
@@ -8,7 +9,7 @@ export default async function ClientsPage(props: { searchParams: Promise<{ q?: s
   
   const supabase = await createClient();
 
-  // Obtener clientes junto con sus facturas para calcular la deuda total
+  // Obtener clientes con todos sus datos y facturas para calcular métricas
   let dbQuery = supabase
     .from("clients")
     .select(`
@@ -16,108 +17,97 @@ export default async function ClientsPage(props: { searchParams: Promise<{ q?: s
       client_code,
       name,
       identifier,
+      dni,
+      cuit_cuil,
       locality,
+      address,
       status,
+      origin_codes,
       invoices (
-        balance_amount
+        balance_amount,
+        due_date,
+        vendors (
+          name
+        )
       )
     `)
     .order("name");
 
   if (query) {
-    dbQuery = dbQuery.ilike("name", `%${query}%`);
+    dbQuery = dbQuery.or(`dni.ilike.%${query}%,cuit_cuil.ilike.%${query}%,identifier.ilike.%${query}%,client_code.ilike.%${query}%,name.ilike.%${query}%`);
   }
 
   const { data: clients } = await dbQuery;
+  const today = new Date();
+
+  const formattedClients = (clients || []).map((client: any) => {
+    let totalDebt = 0;
+    let overdueDebt = 0;
+    let vendorName = "";
+
+    const invoices = Array.isArray(client.invoices) ? client.invoices : [];
+    invoices.forEach((inv: any) => {
+      const bal = Number(inv.balance_amount || 0);
+      totalDebt += bal;
+      
+      let dueDate = today;
+      if (inv.due_date) {
+        const d = new Date(String(inv.due_date).includes('T') ? inv.due_date : `${inv.due_date}T12:00:00Z`);
+        if (!isNaN(d.getTime())) dueDate = d;
+        else {
+          const d2 = new Date(inv.due_date);
+          if (!isNaN(d2.getTime())) dueDate = d2;
+        }
+      }
+      const overdueDays = differenceInDays(today, dueDate);
+      if (overdueDays > 0 && bal > 0) {
+        overdueDebt += bal;
+      }
+
+      if (!vendorName && inv.vendors?.name) {
+        vendorName = inv.vendors.name;
+      }
+    });
+
+    // Determine identifier string
+    let idStr = client.identifier || "";
+    if (!idStr && (client.dni || client.cuit_cuil)) {
+      if (client.dni && client.cuit_cuil) idStr = `${client.dni} / ${client.cuit_cuil}`;
+      else idStr = client.dni || client.cuit_cuil || "";
+    }
+
+    return {
+      id: client.id,
+      client_code: client.client_code || "",
+      name: client.name || "Sin nombre",
+      identifier: idStr,
+      locality: client.locality || "",
+      address: client.address || "",
+      status: client.status || "active",
+      invoicesCount: invoices.length,
+      totalDebt,
+      overdueDebt,
+      vendorName: vendorName || "General",
+    };
+  });
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Clientes</h1>
-          <p className="text-slate-400 mt-1">Gestión de cartera, saldos y estado crediticio.</p>
+          <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+            Gestión Oficial de Clientes
+          </h1>
+          <p className="text-slate-400 mt-1 text-sm">
+            Historial consolidado, saldos pendientes y estado crediticio de la cartera en calle.
+          </p>
         </div>
-        <div className="flex flex-col md:flex-row gap-4 items-center">
+        <div className="flex items-center">
           <ClientSearchInput />
-          <Link 
-            href="/clients/new" 
-            className="bg-white text-slate-950 hover:bg-slate-200 transition-colors px-4 py-2.5 rounded-md font-medium text-sm w-full md:w-auto text-center"
-          >
-            Nuevo Cliente
-          </Link>
         </div>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-950/50 border-b border-slate-800">
-            <tr>
-              <th className="px-6 py-4 font-medium text-slate-400">Cliente</th>
-              <th className="px-6 py-4 font-medium text-slate-400">Identificador</th>
-              <th className="px-6 py-4 font-medium text-slate-400">Localidad</th>
-              <th className="px-6 py-4 font-medium text-slate-400 text-right">Deuda Total</th>
-              <th className="px-6 py-4 font-medium text-slate-400">Estado</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800">
-            {clients?.map((client) => {
-              const totalDebt = client.invoices.reduce((acc: number, inv: any) => acc + Number(inv.balance_amount), 0);
-              
-              return (
-                <tr key={client.id} className="hover:bg-slate-800/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <Link href={`/clients/${client.id}`} className="font-medium text-slate-200 hover:text-emerald-400 transition-colors">
-                      {client.name}
-                    </Link>
-                    <div className="text-xs text-slate-500 font-mono mt-1">Cód: {client.client_code}</div>
-                  </td>
-                  <td className="px-6 py-4 text-slate-400">
-                    {client.identifier ? (
-                      client.identifier.includes("/") ? (
-                        <div className="flex flex-col gap-0.5 text-xs">
-                          <span><strong className="text-slate-300 font-medium">DNI:</strong> {client.identifier.split("/")[0].trim()}</span>
-                          <span><strong className="text-slate-300 font-medium">CUIT:</strong> {client.identifier.split("/")[1].trim()}</span>
-                        </div>
-                      ) : (
-                        client.identifier
-                      )
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-slate-400">{client.locality || "-"}</td>
-                  <td className="px-6 py-4 font-medium text-right text-emerald-400">
-                    ${totalDebt.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${
-                      client.status === 'active' 
-                        ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-                        : client.status === 'blocked'
-                          ? 'bg-rose-500/10 text-rose-500 border-rose-500/20'
-                          : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
-                    }`}>
-                      {client.status?.toUpperCase()}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-            
-            {(!clients || clients.length === 0) && (
-              <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
-                  {query ? (
-                    <>No se encontraron clientes que coincidan con "<strong>{query}</strong>".</>
-                  ) : (
-                    <>No hay clientes registrados aún. Importa un archivo PDF para comenzar.</>
-                  )}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <ClientsTable clients={formattedClients} />
     </div>
   );
 }
