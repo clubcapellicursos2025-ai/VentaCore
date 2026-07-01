@@ -8,6 +8,7 @@ interface LoadingOverlayProps {
   title?: string;
   message?: string;
   step?: "analyzing" | "saving" | "deleting" | "general";
+  progress?: number;
 }
 
 export default function LoadingOverlay({
@@ -15,6 +16,7 @@ export default function LoadingOverlay({
   title = "Procesando operación...",
   message = "Por favor, espera un momento mientras el sistema trabaja.",
   step = "general",
+  progress,
 }: LoadingOverlayProps) {
   if (!isOpen) return null;
 
@@ -70,10 +72,22 @@ export default function LoadingOverlay({
           {message}
         </p>
 
-        {/* Modern Shimmer Progress Bar */}
-        <div className="w-full h-2 bg-slate-800/80 rounded-full overflow-hidden border border-slate-700/50 relative">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-500 to-cyan-400 animate-shimmer" style={{ backgroundSize: "200% 100%" }} />
+        {/* Modern Shimmer or Percentage Progress Bar */}
+        <div className="w-full h-2.5 bg-slate-800/80 rounded-full overflow-hidden border border-slate-700/50 relative">
+          {progress !== undefined ? (
+            <div 
+              className="h-full bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400 transition-all duration-300"
+              style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+            />
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-500 to-cyan-400 animate-shimmer" style={{ backgroundSize: "200% 100%" }} />
+          )}
         </div>
+        {progress !== undefined && (
+          <div className="mt-2 text-right text-xs font-mono font-bold text-cyan-400">
+            {Math.round(progress)}% completado
+          </div>
+        )}
 
         <div className="mt-4 flex items-center justify-center gap-2 text-xs font-medium text-slate-400">
           <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-ping" />

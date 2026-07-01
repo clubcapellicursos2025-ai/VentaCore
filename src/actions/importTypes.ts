@@ -33,4 +33,5 @@ export type ParseResult = {
   clients?: ParsedClient[];
   error?: string;
   rawRowsRead?: number;
+  discardedLines?: { line: number; content: string; reason: string }[];
 };

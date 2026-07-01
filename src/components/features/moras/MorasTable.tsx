@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowUpDown, ArrowUp, ArrowDown, ExternalLink } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Download } from "lucide-react";
 
 export interface MoraRow {
   id: string;
@@ -43,6 +43,27 @@ export function MorasTable({ initialInvoices }: { initialInvoices: MoraRow[] }) 
     return 0;
   });
 
+  const exportToCSV = () => {
+    const headers = ["Cliente", "Localidad", "Factura", "Marca", "Vendedor", "Días Mora", "Saldo"];
+    const rows = sortedInvoices.map(i => [
+      `"${(i.clientName || "").replace(/"/g, '""')}"`,
+      `"${(i.locality || "").replace(/"/g, '""')}"`,
+      `"${i.invoice_number}"`,
+      `"${i.origin_brand}"`,
+      `"${(i.vendorName || "").replace(/"/g, '""')}"`,
+      i.daysLate,
+      i.balance
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Top50_Mayores_Deudores_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const renderSortIcon = (field: keyof MoraRow) => {
     if (sortField !== field) {
       return <ArrowUpDown className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors ml-1 inline" />;
@@ -56,9 +77,18 @@ export function MorasTable({ initialInvoices }: { initialInvoices: MoraRow[] }) 
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg mt-6">
-      <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/50 flex justify-between items-center">
-        <h3 className="font-semibold text-white">Top 50 Mayores Deudores</h3>
-        <span className="text-xs text-slate-400">Haz clic en los encabezados para ordenar</span>
+      <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/50 flex justify-between items-center flex-wrap gap-3">
+        <div>
+          <h3 className="font-semibold text-white">Top 50 Mayores Deudores</h3>
+          <span className="text-xs text-slate-400">Haz clic en los encabezados para ordenar</span>
+        </div>
+        <button
+          onClick={exportToCSV}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-slate-200 transition-colors shadow-sm"
+        >
+          <Download className="w-3.5 h-3.5 text-cyan-400" />
+          Exportar CSV
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm whitespace-nowrap">

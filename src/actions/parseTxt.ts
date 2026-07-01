@@ -33,9 +33,22 @@ function parseTxtNumber(strVal?: string): number {
   return isNaN(parsed) ? 0 : parsed;
 }
 
+function normalizeLocalityAndAddress(loc?: string, addr?: string) {
+  let cleanLoc = (loc || "").replace(/\s+/g, " ").trim();
+  let cleanAddr = (addr || "").replace(/\s+/g, " ").trim();
+  if (!cleanLoc || cleanLoc === "-" || cleanLoc.toUpperCase() === "UNKNOWN" || cleanLoc.toUpperCase() === "NULL" || cleanLoc === "undefined") {
+    cleanLoc = "Sin Localidad";
+  }
+  if (!cleanAddr || cleanAddr === "-" || cleanAddr.toUpperCase() === "NULL" || cleanAddr === "undefined") {
+    cleanAddr = "Sin Domicilio Registrado";
+  }
+  return { locality: cleanLoc, address: cleanAddr };
+}
+
 // Lector de reportes de texto unificado (Ancho fijo / Estilo impresora ERP para Wella, L'Oréal y KeyNort)
-function parsePrintableTextReport(lines: string[]): ParsedClient[] {
+function parsePrintableTextReport(lines: string[]): { clients: ParsedClient[]; discardedLines: { line: number; content: string; reason: string }[] } {
   const clients: ParsedClient[] = [];
+  const discardedLines: { line: number; content: string; reason: string }[] = [];
   let currentClient: ParsedClient | null = null;
   
   const clientHeaderRegex = /^(.+?)\s*(\d{5})\s+(.+?)\s+([A-Za-z0-9\s.]+?)\s*\*\s*([\d/]+)?(?:\s+0)?$/;
@@ -86,14 +99,16 @@ function parsePrintableTextReport(lines: string[]): ParsedClient[] {
           }
         }
 
+        const norm = normalizeLocalityAndAddress(locality, address);
+
         currentClient = {
           code,
           name,
           dni,
           cuitCuil,
           identifier: idStr || cuitCuil || dni,
-          locality,
-          address,
+          locality: norm.locality,
+          address: norm.address,
           invoices: []
         };
       }
@@ -224,6 +239,14 @@ function parsePrintableTextReport(lines: string[]): ParsedClient[] {
           };
         }
       }
+      
+      if (!invoiceRegex.test(line) && !invoiceRegexNew.test(line) && line.trim().length > 3 && !line.includes("------") && !line.includes("====")) {
+        discardedLines.push({
+          line: lines.indexOf(line) + 1,
+          content: line.slice(0, 100),
+          reason: "Línea de texto no reconocida como factura en el reporte ERP"
+        });
+      }
 
       if (parsedInvoice) {
         currentClient.invoices.push(parsedInvoice);
@@ -235,7 +258,10 @@ function parsePrintableTextReport(lines: string[]): ParsedClient[] {
     clients.push(currentClient);
   }
 
-  return clients.filter(c => c.invoices.length > 0);
+  return { 
+    clients: clients.filter(c => c.invoices.length > 0),
+    discardedLines 
+  };
 }
 
 export async function parseTxtAction(formData: FormData): Promise<ParseResult> {
@@ -253,7 +279,8 @@ export async function parseTxtAction(formData: FormData): Promise<ParseResult> {
           success: true,
           brandDetected: `${excelRes.brandDetected} (TXT/CSV Tabular)`,
           clients: excelRes.clients,
-          rawRowsRead: excelRes.rawRowsRead
+          rawRowsRead: excelRes.rawRowsRead,
+          discardedLines: excelRes.discardedLines
         };
       }
     } catch (e) {
@@ -274,9 +301,12 @@ export async function parseTxtAction(formData: FormData): Promise<ParseResult> {
     const fileNameUpper = file.name.toUpperCase();
     let brandDetected = "Desconocido (TXT)";
     let clients: ParsedClient[] = [];
+    let discardedLines: { line: number; content: string; reason: string }[] = [];
 
     // Detección e interpretación unificada del reporte impreso
-    clients = parsePrintableTextReport(lines);
+    const reportRes = parsePrintableTextReport(lines);
+    clients = reportRes.clients;
+    discardedLines = reportRes.discardedLines;
 
     if (clients.length > 0) {
       const isWella = fileNameUpper.includes("WELLA") || fileNameUpper.includes("FARMAVI") || lines.some(l => l.includes("FACTURA") && l.includes("SUPAGO"));
@@ -309,7 +339,8 @@ export async function parseTxtAction(formData: FormData): Promise<ParseResult> {
       success: true,
       brandDetected,
       clients,
-      rawRowsRead: lines.length
+      rawRowsRead: lines.length,
+      discardedLines
     };
   } catch (error: any) {
     console.error("TXT parse error:", error);

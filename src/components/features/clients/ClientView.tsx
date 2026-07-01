@@ -4,15 +4,18 @@ import { format, differenceInDays } from "date-fns";
 import { es } from "date-fns/locale";
 import React from "react";
 import ClientOriginGroups from "./ClientOriginGroups";
+import { ClientNotes } from "./ClientNotes";
+import { getClientNotes } from "@/actions/noteActions";
 
 export async function ClientView({ clientId }: { clientId: string }) {
   const supabase = await createClient();
 
   // Ejecutar consultas en paralelo sin JOINS de PostgREST para máxima velocidad y cero fallos por FK
-  const [{ data: client, error }, { data: rawInvoices }, { data: vendorsData }] = await Promise.all([
+  const [{ data: client, error }, { data: rawInvoices }, { data: vendorsData }, initialNotes] = await Promise.all([
     supabase.from("clients").select("*").eq("id", clientId).single(),
     supabase.from("invoices").select("*").eq("client_id", clientId),
-    supabase.from("vendors").select("id, name")
+    supabase.from("vendors").select("id, name"),
+    getClientNotes(clientId)
   ]);
 
   if (error || !client) {
@@ -177,6 +180,8 @@ export async function ClientView({ clientId }: { clientId: string }) {
       {/* Origin Groups Client Component */}
       <ClientOriginGroups invoices={processedInvoices} />
       
+      {/* Bitácora Comercial y de Cobranzas */}
+      <ClientNotes clientId={clientId} initialNotes={initialNotes} />
     </div>
   );
 }

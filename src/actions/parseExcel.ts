@@ -39,6 +39,18 @@ function parseExcelNumber(numVal: any): number {
   return 0;
 }
 
+function normalizeLocalityAndAddress(loc?: string, addr?: string) {
+  let cleanLoc = (loc || "").replace(/\s+/g, " ").trim();
+  let cleanAddr = (addr || "").replace(/\s+/g, " ").trim();
+  if (!cleanLoc || cleanLoc === "-" || cleanLoc.toUpperCase() === "UNKNOWN" || cleanLoc.toUpperCase() === "NULL" || cleanLoc === "undefined") {
+    cleanLoc = "Sin Localidad";
+  }
+  if (!cleanAddr || cleanAddr === "-" || cleanAddr.toUpperCase() === "NULL" || cleanAddr === "undefined") {
+    cleanAddr = "Sin Domicilio Registrado";
+  }
+  return { locality: cleanLoc, address: cleanAddr };
+}
+
 export async function parseExcelBuffer(buffer: Buffer, fileName: string): Promise<ParseResult> {
   try {
     const workbook = xlsx.read(buffer, { type: "buffer" });
@@ -133,6 +145,7 @@ export async function parseExcelBuffer(buffer: Buffer, fileName: string): Promis
     const data: any[] = xlsx.utils.sheet_to_json(sheet, { range: headerRowIndex });
     
     const clientsMap = new Map<string, ParsedClient>();
+    const discardedLines: { line: number; content: string; reason: string }[] = [];
     let currentBrand = "Desconocido";
 
     if (formatType === "LOREAL_KEYFULL") {
@@ -165,13 +178,17 @@ export async function parseExcelBuffer(buffer: Buffer, fileName: string): Promis
         if (c_code && c_code !== "undefined" && c_code !== "null") {
           currentClientCode = c_code;
           if (!clientsMap.has(c_code)) {
+            const norm = normalizeLocalityAndAddress(
+              String(getCellVal(row, ["LOCALIDAD", "CIUDAD"]) || ""),
+              String(getCellVal(row, ["DOMICILIO", "DIRECCION"]) || "")
+            );
             clientsMap.set(c_code, {
               code: c_code,
               name: c_name,
               dni: dni,
               cuitCuil: cuit,
-              locality: String(getCellVal(row, ["LOCALIDAD", "CIUDAD"]) || ""),
-              address: String(getCellVal(row, ["DOMICILIO", "DIRECCION"]) || ""),
+              locality: norm.locality,
+              address: norm.address,
               invoices: []
             });
           } else if (c_name && !clientsMap.get(c_code)?.name) {
@@ -215,6 +232,12 @@ export async function parseExcelBuffer(buffer: Buffer, fileName: string): Promis
            if (clientsMap.has(currentClientCode)) {
              clientsMap.get(currentClientCode)?.invoices.push(invoice);
            }
+        } else if (!c_code && !currentClientCode) {
+           discardedLines.push({
+             line: i + headerRowIndex + 1,
+             content: JSON.stringify(row).slice(0, 100),
+             reason: "Fila sin comprobante ni código de cliente identificable"
+           });
         }
       }
     } else if (formatType === "WELLA") {
@@ -243,13 +266,17 @@ export async function parseExcelBuffer(buffer: Buffer, fileName: string): Promis
         if (c_code && c_code !== "undefined" && c_code !== "null") {
           currentClientCode = c_code;
           if (!clientsMap.has(c_code)) {
+            const norm = normalizeLocalityAndAddress(
+              String(getCellVal(row, ["LOCALIDAD", "CIUDAD"]) || ""),
+              String(getCellVal(row, ["DOMICILIO", "DIRECCION"]) || "")
+            );
             clientsMap.set(c_code, {
               code: c_code,
               name: c_name,
               dni: dni,
               cuitCuil: cuit,
-              locality: String(getCellVal(row, ["LOCALIDAD", "CIUDAD"]) || ""),
-              address: String(getCellVal(row, ["DOMICILIO", "DIRECCION"]) || ""),
+              locality: norm.locality,
+              address: norm.address,
               invoices: []
             });
           } else if (c_name && !clientsMap.get(c_code)?.name) {
@@ -294,6 +321,12 @@ export async function parseExcelBuffer(buffer: Buffer, fileName: string): Promis
            if (clientsMap.has(currentClientCode)) {
              clientsMap.get(currentClientCode)?.invoices.push(invoice);
            }
+        } else if (!c_code && !currentClientCode) {
+           discardedLines.push({
+             line: i + headerRowIndex + 1,
+             content: JSON.stringify(row).slice(0, 100),
+             reason: "Fila Wella sin factura ni código de cliente identificable"
+           });
         }
       }
     }
@@ -304,7 +337,8 @@ export async function parseExcelBuffer(buffer: Buffer, fileName: string): Promis
       success: true, 
       brandDetected: currentBrand,
       clients, 
-      rawRowsRead: data.length 
+      rawRowsRead: data.length,
+      discardedLines
     };
   } catch (error: any) {
     console.error("Excel parse error:", error);

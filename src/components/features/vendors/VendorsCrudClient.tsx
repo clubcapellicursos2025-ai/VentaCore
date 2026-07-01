@@ -17,14 +17,16 @@ import {
   ArrowUpDown, 
   X,
   AlertTriangle,
-  Tag
+  Tag,
+  ArrowRightLeft
 } from "lucide-react";
 import { 
   VendorData, 
   getVendorsList, 
   saveVendorAction, 
   deleteVendorAction, 
-  syncOfficialVendorsAction 
+  syncOfficialVendorsAction,
+  transferVendorPortfolioAction
 } from "@/actions/vendorActions";
 
 interface VendorsCrudClientProps {
@@ -51,6 +53,9 @@ export function VendorsCrudClient({ initialVendors }: VendorsCrudClientProps) {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [transferSource, setTransferSource] = useState("");
+  const [transferTarget, setTransferTarget] = useState("");
   const [editingVendor, setEditingVendor] = useState<VendorData | null>(null);
   const [notification, setNotification] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -192,6 +197,32 @@ export function VendorsCrudClient({ initialVendors }: VendorsCrudClientProps) {
     }
   };
 
+  const handleTransferPortfolio = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferSource || !transferTarget) {
+      showNotification("Selecciona vendedor de origen y destino.", "error");
+      return;
+    }
+    if (transferSource === transferTarget) {
+      showNotification("El origen y el destino no pueden ser el mismo vendedor.", "error");
+      return;
+    }
+    if (!confirm("¿Estás seguro de transferir masivamente todos los comprobantes pendientes de este vendedor al nuevo destino? Esto actualizará la cartera comercial de cobranzas.")) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await transferVendorPortfolioAction(transferSource, transferTarget);
+      setIsTransferModalOpen(false);
+      showNotification(res.message);
+      await refreshList();
+    } catch (err: any) {
+      showNotification("Error en la transferencia: " + err.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortOrder(sortOrder === "asc" ? "desc" : "asc");
@@ -270,6 +301,19 @@ export function VendorsCrudClient({ initialVendors }: VendorsCrudClientProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => {
+              setTransferSource("");
+              setTransferTarget("");
+              setIsTransferModalOpen(true);
+            }}
+            disabled={loading}
+            className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-lg shadow-purple-500/20 transition-all disabled:opacity-50"
+          >
+            <ArrowRightLeft className="w-4 h-4 text-purple-200" />
+            Transferir Cartera
+          </button>
+
           <button
             onClick={handleSyncOfficial}
             disabled={syncing || loading}
@@ -680,6 +724,75 @@ export function VendorsCrudClient({ initialVendors }: VendorsCrudClientProps) {
                 >
                   {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
                   Guardar Vendedor
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Transferencia de Cartera */}
+      {isTransferModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-950/60">
+              <div className="flex items-center gap-2.5">
+                <ArrowRightLeft className="w-5 h-5 text-purple-400" />
+                <h3 className="font-bold text-white">Transferencia Masiva de Cartera</h3>
+              </div>
+              <button onClick={() => setIsTransferModalOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleTransferPortfolio} className="p-6 space-y-4">
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Mueve todos los clientes y comprobantes pendientes de un vendedor a otro (por ejemplo, al cubrir vacantes o reasignar zonas comerciales).
+              </p>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-300 uppercase">Vendedor de Origen (Quien entrega)</label>
+                <select
+                  value={transferSource}
+                  onChange={(e) => setTransferSource(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="">-- Seleccionar Origen --</option>
+                  {vendors.map(v => (
+                    <option key={v.id} value={v.id}>#{v.vendor_code} - {v.name} ({v.totalDebt > 0 ? "Con Deuda" : "Sin Deuda"})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-300 uppercase">Vendedor de Destino (Quien recibe)</label>
+                <select
+                  value={transferTarget}
+                  onChange={(e) => setTransferTarget(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="">-- Seleccionar Destino --</option>
+                  {vendors.map(v => (
+                    <option key={v.id} value={v.id}>#{v.vendor_code} - {v.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsTransferModalOpen(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-medium transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-sm font-semibold shadow-lg shadow-purple-500/20 transition-all disabled:opacity-50 flex items-center gap-2"
+                >
+                  {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  Confirmar Transferencia
                 </button>
               </div>
             </form>

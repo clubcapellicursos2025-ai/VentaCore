@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { Bell, Sparkles, CheckCircle, Clock, Database, X, ShieldCheck } from "lucide-react";
+import { Bell, Sparkles, CheckCircle, Clock, Database, X, ShieldCheck, LogOut, User } from "lucide-react";
+import { logout } from "@/actions/auth";
 
 export function Topbar() {
   const [showNotifs, setShowNotifs] = useState(false);
@@ -122,6 +123,29 @@ export function Topbar() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* User Profile & Logout */}
+      <div className="flex items-center gap-3 pl-4 border-l border-slate-800/80">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-slate-800 to-slate-900 border border-slate-700/80 flex items-center justify-center text-slate-300 shadow-sm">
+            <User className="w-4 h-4 text-cyan-400" />
+          </div>
+          <div className="hidden sm:block text-left">
+            <div className="text-xs font-bold text-white leading-none">Administrador</div>
+            <div className="text-[10px] text-slate-400 font-mono mt-0.5">VentaCore OS</div>
+          </div>
+        </div>
+        <form action={logout}>
+          <button
+            type="submit"
+            className="p-2 rounded-xl bg-slate-900 hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 text-slate-400 hover:text-rose-400 transition-all shadow-sm cursor-pointer flex items-center gap-1.5 px-2.5"
+            title="Cerrar Sesión y salir"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="text-xs font-semibold hidden md:inline">Salir</span>
+          </button>
+        </form>
       </div>
     </header>
   );

@@ -311,3 +311,68 @@ export async function syncOfficialVendorsAction() {
   revalidatePath("/vendors");
   return { success: true, message: "21 vendedores oficiales sincronizados correctamente según diagrama." };
 }
+
+export async function transferVendorPortfolioAction(fromVendorIdOrCode: string, toVendorIdOrCode: string) {
+  const supabase = await createClient();
+  const companyId = await getCompanyId(supabase);
+
+  const resolveVendorId = async (idOrCode: string): Promise<string> => {
+    if (!idOrCode.startsWith("official-")) {
+      const { data: v } = await supabase.from("vendors").select("id").eq("id", idOrCode).eq("company_id", companyId).single();
+      if (v) return v.id;
+    }
+    const code = idOrCode.replace("official-", "").trim().toUpperCase();
+    const { data: byCode } = await supabase.from("vendors").select("id").eq("vendor_code", code).eq("company_id", companyId).single();
+    if (byCode) return byCode.id;
+
+    const match = getOfficialVendorMatch(code);
+    const payload = {
+      company_id: companyId,
+      name: match ? match.name : `Vendedor ${code}`,
+      vendor_code: code,
+      status: match ? match.status : "active",
+      brand_codes: match ? match.brand_codes : {}
+    };
+
+    let { data: newV, error } = await supabase.from("vendors").insert(payload).select("id").single();
+    if (error && (error.message.includes("brand_codes") || error.code === "PGRST204")) {
+      const { brand_codes, ...fallbackPayload } = payload;
+      const resFallback = await supabase.from("vendors").insert(fallbackPayload).select("id").single();
+      newV = resFallback.data;
+      error = resFallback.error;
+    }
+
+    if (error || !newV) throw new Error(`No se pudo resolver el vendedor ${code}: ${error?.message || "Desconocido"}`);
+    return newV.id;
+  };
+
+  const sourceDbId = await resolveVendorId(fromVendorIdOrCode);
+  const targetDbId = await resolveVendorId(toVendorIdOrCode);
+
+  if (sourceDbId === targetDbId) {
+    throw new Error("El vendedor de origen y destino no pueden ser el mismo.");
+  }
+
+  const { count, error: countErr } = await supabase
+    .from("invoices")
+    .select("id", { count: "exact", head: true })
+    .eq("vendor_id", sourceDbId)
+    .eq("company_id", companyId);
+
+  if (countErr) throw new Error(countErr.message);
+  if (!count || count === 0) {
+    return { success: true, message: "El vendedor de origen no tenía comprobantes ni clientes pendientes asignados en la base de datos." };
+  }
+
+  const { error: updErr } = await supabase
+    .from("invoices")
+    .update({ vendor_id: targetDbId })
+    .eq("vendor_id", sourceDbId)
+    .eq("company_id", companyId);
+
+  if (updErr) throw new Error(`Error al transferir cartera: ${updErr.message}`);
+
+  revalidatePath("/vendors");
+  revalidatePath("/clients");
+  return { success: true, message: `Se transfirieron exitosamente ${count} comprobantes pendientes a la nueva cartera del vendedor.` };
+}

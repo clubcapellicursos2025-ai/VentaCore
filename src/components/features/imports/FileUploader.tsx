@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Sparkles, FileText } from "lucide-react";
+import React, { useState, useTransition, useEffect } from "react";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, Sparkles, FileText, Eye, ArrowRight } from "lucide-react";
 import { parseExcelAction } from "@/actions/parseExcel";
 import { parsePdfAction } from "@/actions/parsePdf";
 import { parseTxtAction } from "@/actions/parseTxt";
@@ -9,6 +9,7 @@ import type { ParsedClient, ParseResult } from "@/actions/importTypes";
 import { saveImportAction } from "@/actions/saveImport";
 import LoadingOverlay from "@/components/common/LoadingOverlay";
 import AlertModal from "@/components/common/AlertModal";
+import ImportPreviewModal from "./ImportPreviewModal";
 
 export default function FileUploader() {
   const [importMode, setImportMode] = useState<"PDF_EXCEL" | "TXT">("PDF_EXCEL");
@@ -17,6 +18,8 @@ export default function FileUploader() {
   const [isSaving, startSaving] = useTransition();
   const [result, setResult] = useState<ParseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number | undefined>(undefined);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   // Alert Modal state
   const [modalState, setModalState] = useState<{
@@ -40,6 +43,13 @@ export default function FileUploader() {
   const handleUpload = () => {
     if (!file) return;
     
+    let p = 10;
+    setProgress(p);
+    const interval = setInterval(() => {
+      p = Math.min(90, p + Math.floor(Math.random() * 15) + 5);
+      setProgress(p);
+    }, 300);
+
     startParsing(async () => {
       try {
         const formData = new FormData();
@@ -53,6 +63,10 @@ export default function FileUploader() {
           data = isPdf ? await parsePdfAction(formData) : await parseExcelAction(formData);
         }
         
+        clearInterval(interval);
+        setProgress(100);
+        setTimeout(() => setProgress(undefined), 500);
+
         if (data.error) {
            setError(data.error);
            setResult(null);
@@ -67,8 +81,11 @@ export default function FileUploader() {
         } else if (data.success && data.clients) {
            setResult(data);
            setError(null);
+           setIsPreviewOpen(true);
         }
       } catch (err: any) {
+        clearInterval(interval);
+        setProgress(undefined);
         const errMsg = err?.message || "Error al procesar el archivo";
         setError(errMsg);
         setModalState({
@@ -88,6 +105,13 @@ export default function FileUploader() {
      const clientsCount = result.clients.length;
      const clientsToSave = result.clients;
 
+     let p = 5;
+     setProgress(p);
+     const interval = setInterval(() => {
+       p = Math.min(95, p + Math.floor(Math.random() * 10) + 3);
+       setProgress(p);
+     }, 200);
+
      startSaving(async () => {
         try {
            const formatType = importMode === "TXT" 
@@ -95,7 +119,12 @@ export default function FileUploader() {
              : (file.name.toLowerCase().endsWith(".pdf") ? "PDF" : "Excel");
 
            const res = await saveImportAction(file.name, formatType, clientsToSave);
+           clearInterval(interval);
+           setProgress(100);
+           setTimeout(() => setProgress(undefined), 400);
+
            if (res.success) {
+              setIsPreviewOpen(false);
               setResult(null);
               setFile(null);
               setModalState({
@@ -121,6 +150,8 @@ export default function FileUploader() {
               });
            }
         } catch(err: any) {
+           clearInterval(interval);
+           setProgress(undefined);
            const errTxt = err?.message || String(err) || "Error al guardar en la base de datos.";
            setError(errTxt);
            setModalState({
@@ -141,12 +172,14 @@ export default function FileUploader() {
       <LoadingOverlay
         isOpen={isParsing}
         step="analyzing"
+        progress={progress}
         title="Analizando Reporte con IA..."
         message={`Extrayendo e identificando comprobantes, saldos y clientes de ${file?.name || "archivo"}...`}
       />
       <LoadingOverlay
         isOpen={isSaving}
         step="saving"
+        progress={progress}
         title="Consolidando en Base de Datos..."
         message={`Procesando en lotes de alta velocidad los ${result?.clients?.length || 0} clientes y sus comprobantes pendientes...`}
       />
@@ -159,6 +192,16 @@ export default function FileUploader() {
         message={modalState.message}
         details={modalState.details}
         onClose={modalState.onClose || (() => setModalState(prev => ({ ...prev, isOpen: false })))}
+      />
+
+      {/* Import Preview Modal */}
+      <ImportPreviewModal
+        isOpen={isPreviewOpen}
+        onClose={() => setIsPreviewOpen(false)}
+        onConfirm={handleConfirm}
+        isSaving={isSaving}
+        result={result}
+        fileName={file?.name}
       />
 
       {/* Botones de Selección de Modo de Importación */}
@@ -276,59 +319,46 @@ export default function FileUploader() {
       )}
 
       {result && result.clients && !error && (
-        <div className="mt-8 space-y-4 animate-fadeIn">
-          <div className="flex items-center justify-between mb-4 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shadow-md">
-            <h3 className="text-lg font-bold text-white flex items-center gap-2.5">
-              <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-              <span>Origen Detectado:</span>
-              <span className="text-cyan-400 bg-cyan-500/10 px-3 py-1 rounded-lg border border-cyan-500/20 font-mono font-semibold">{result.brandDetected}</span>
-            </h3>
-            <span className="bg-emerald-500/10 text-emerald-400 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-emerald-500/20 shadow-inner">
-              {result.clients.length} clientes consolidados listos
-            </span>
+        <div className="mt-8 bg-gradient-to-r from-slate-900 to-slate-950 p-6 rounded-3xl border border-slate-800 shadow-2xl space-y-6 animate-fadeIn">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-5">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+                <h3 className="text-xl font-bold text-white">Reporte Procesado y Validado</h3>
+              </div>
+              <p className="text-xs text-slate-400">
+                Se detectaron y estructuraron correctamente los saldos del reporte.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-cyan-400 bg-cyan-500/10 px-3.5 py-1.5 rounded-xl border border-cyan-500/20 font-mono text-xs font-bold">
+                {result.brandDetected}
+              </span>
+              <span className="bg-emerald-500/10 text-emerald-400 px-3.5 py-1.5 rounded-xl text-xs font-bold border border-emerald-500/20 shadow-inner">
+                {result.clients.length} clientes listos
+              </span>
+            </div>
           </div>
 
-          <div className="bg-slate-900/90 border border-slate-800/80 rounded-2xl overflow-hidden shadow-2xl">
-             <div className="max-h-[420px] overflow-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-950/80 sticky top-0 border-b border-slate-800 backdrop-blur-md z-10">
-                    <tr>
-                      <th className="px-5 py-3.5 font-semibold text-slate-400">Código</th>
-                      <th className="px-5 py-3.5 font-semibold text-slate-400">Cliente</th>
-                      <th className="px-5 py-3.5 font-semibold text-slate-400">DNI / CUIT</th>
-                      <th className="px-5 py-3.5 font-semibold text-slate-400">Comprobantes</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60">
-                    {result.clients.slice(0, 100).map((c, i) => (
-                      <tr key={i} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="px-5 py-3.5 text-cyan-400 font-mono font-semibold">{c.code}</td>
-                        <td className="px-5 py-3.5 font-medium text-slate-200">{c.name}</td>
-                        <td className="px-5 py-3.5 text-slate-400 font-mono">{c.cuitCuil || c.dni || '-'}</td>
-                        <td className="px-5 py-3.5">
-                          <span className="px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 text-xs font-medium border border-slate-700/50">
-                            {c.invoices.length} comprobantes
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-             </div>
-             {result.clients.length > 100 && (
-               <div className="p-3.5 text-center text-xs font-medium text-slate-400 bg-slate-950/60 border-t border-slate-800">
-                  Mostrando los primeros 100 clientes... (Total detectados: <strong className="text-white">{result.clients.length}</strong>)
-               </div>
-             )}
-          </div>
-          <div className="flex justify-end pt-4">
+          <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
+             <button
+                type="button"
+                onClick={() => setIsPreviewOpen(true)}
+                className="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-6 py-3.5 rounded-xl font-bold text-xs inline-flex items-center justify-center gap-2 transition-all shadow-md active:scale-95"
+             >
+                <Eye className="w-4 h-4 text-cyan-400" />
+                <span>Ver Pre-visualización, Duplicados y Excepciones</span>
+             </button>
+
              <button 
+                type="button"
                 onClick={handleConfirm}
                 disabled={isSaving}
-                className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 transition-all text-white px-8 py-3.5 rounded-xl font-bold inline-flex items-center gap-2.5 shadow-xl shadow-emerald-500/20 transform active:scale-95"
+                className="w-full sm:w-auto bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 transition-all text-white px-8 py-3.5 rounded-xl font-bold text-xs inline-flex items-center justify-center gap-2.5 shadow-xl shadow-emerald-500/20 transform active:scale-95"
              >
-                {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-                {isSaving ? "Consolidando en Base de Datos..." : `Confirmar e Importar DB Oficial`}
+                {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                <span>{isSaving ? "Consolidando en Base de Datos..." : `Confirmar e Importar DB Oficial`}</span>
+                {!isSaving && <ArrowRight className="w-4 h-4 ml-0.5" />}
              </button>
           </div>
         </div>

@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Topbar } from "@/components/layout/Topbar";
-import { Omnibar } from "@/components/features/search/Omnibar";
+import { AppShell } from "@/components/layout/AppShell";
 import { createClient } from "@/utils/supabase/server";
 
 const geistSans = Geist({
@@ -38,14 +36,9 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
       <body className="min-h-full flex bg-slate-950 text-slate-50">
-        <Sidebar />
-        <div className="flex flex-col flex-1 min-w-0">
-          <Topbar />
-          <Omnibar clients={clients || []} />
-          <main className="flex-1 p-6 overflow-x-hidden overflow-y-auto min-w-0 w-full max-w-full">
-            {children}
-          </main>
-        </div>
+        <AppShell clients={clients || []}>
+          {children}
+        </AppShell>
       </body>
     </html>
   );

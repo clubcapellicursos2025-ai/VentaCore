@@ -23,6 +23,9 @@ export function ClientsTable({ clients }: { clients: ClientRow[] }) {
   const router = useRouter();
   const [sortField, setSortField] = useState<keyof ClientRow>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [vendorFilter, setVendorFilter] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [searchTerm, setSearchTerm] = useState<string>("");
 
   const handleSort = (field: keyof ClientRow) => {
     if (sortField === field) {
@@ -33,7 +36,25 @@ export function ClientsTable({ clients }: { clients: ClientRow[] }) {
     }
   };
 
-  const sortedClients = [...clients].sort((a, b) => {
+  const vendorsList = Array.from(new Set(clients.map(c => c.vendorName).filter(Boolean))) as string[];
+
+  const filteredClients = clients.filter(c => {
+    if (vendorFilter !== "ALL" && c.vendorName !== vendorFilter) return false;
+    if (statusFilter === "ACTIVE" && c.status === "blocked") return false;
+    if (statusFilter === "BLOCKED" && c.status !== "blocked") return false;
+    if (statusFilter === "DEBT" && c.overdueDebt <= 0) return false;
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      const matchDni = (c.identifier || "").toLowerCase().includes(q);
+      const matchCode = (c.client_code || "").toLowerCase().includes(q);
+      const matchName = (c.name || "").toLowerCase().includes(q);
+      const matchLocality = (c.locality || "").toLowerCase().includes(q);
+      return matchDni || matchCode || matchName || matchLocality;
+    }
+    return true;
+  });
+
+  const sortedClients = [...filteredClients].sort((a, b) => {
     let valA = a[sortField] || "";
     let valB = b[sortField] || "";
 
@@ -48,6 +69,29 @@ export function ClientsTable({ clients }: { clients: ClientRow[] }) {
     return 0;
   });
 
+  const exportToCSV = () => {
+    const headers = ["Código", "Cliente", "DNI/CUIT", "Localidad", "Vendedor", "Facturas", "Deuda Vencida", "Deuda Total", "Estado"];
+    const rows = sortedClients.map(c => [
+      `"${c.client_code || ""}"`,
+      `"${(c.name || "").replace(/"/g, '""')}"`,
+      `"${(c.identifier || "").replace(/"/g, '""')}"`,
+      `"${(c.locality || "").replace(/"/g, '""')}"`,
+      `"${(c.vendorName || "").replace(/"/g, '""')}"`,
+      c.invoicesCount,
+      c.overdueDebt,
+      c.totalDebt,
+      `"${c.status || "active"}"`
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Cartera_Clientes_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const renderSortIcon = (field: keyof ClientRow) => {
     if (sortField !== field) return <ArrowUpDown className="w-3.5 h-3.5 opacity-30 group-hover:opacity-100 transition-opacity" />;
     return sortDir === "asc" ? <ArrowUp className="w-3.5 h-3.5 text-blue-400" /> : <ArrowDown className="w-3.5 h-3.5 text-blue-400" />;
@@ -58,22 +102,61 @@ export function ClientsTable({ clients }: { clients: ClientRow[] }) {
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
-      <div className="px-6 py-4 border-b border-slate-800 bg-gradient-to-r from-slate-950/90 via-slate-900/90 to-slate-950/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-500/10 rounded-xl border border-blue-500/20">
-            <Users className="w-5 h-5 text-blue-400" />
+      <div className="p-6 border-b border-slate-800 bg-gradient-to-r from-slate-950/90 via-slate-900/90 to-slate-950/90 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-500/10 rounded-xl border border-blue-500/20">
+              <Users className="w-5 h-5 text-blue-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-base flex items-center gap-2">
+                <span>Cartera Oficial de Clientes</span>
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  {sortedClients.length} activos
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Filtra por DNI/CUIT o vendedor y exporta la cartera en CSV.
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="font-bold text-white text-base flex items-center gap-2">
-              <span>Cartera Oficial de Clientes</span>
-              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                {sortedClients.length} activos
-              </span>
-            </h3>
-            <p className="text-xs text-slate-400">
-              Haz clic en cualquier columna para ordenar por código, deuda, mora o ubicación.
-            </p>
-          </div>
+          <button
+            onClick={exportToCSV}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-lg shadow-blue-500/20 self-start sm:self-auto"
+          >
+            <span>Exportar CSV</span>
+          </button>
+        </div>
+
+        {/* Filtros rápidos multicriterio */}
+        <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-800/60 text-xs">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Filtro rápido por DNI, CUIT, código o nombre..."
+            className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-200 outline-none focus:border-blue-500 min-w-[240px]"
+          />
+          <select
+            value={vendorFilter}
+            onChange={(e) => setVendorFilter(e.target.value)}
+            className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-300 outline-none focus:border-blue-500"
+          >
+            <option value="ALL">Todos los Vendedores</option>
+            {vendorsList.map(v => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-300 outline-none focus:border-blue-500"
+          >
+            <option value="ALL">Todos los Estados</option>
+            <option value="ACTIVE">Solo Activos</option>
+            <option value="DEBT">Con Mora / Deuda</option>
+            <option value="BLOCKED">Bloqueados</option>
+          </select>
         </div>
       </div>
 
@@ -159,8 +242,7 @@ export function ClientsTable({ clients }: { clients: ClientRow[] }) {
             {sortedClients.map((c) => (
               <tr 
                 key={c.id} 
-                onClick={() => router.push(`/clients/${c.id}`)}
-                className="hover:bg-slate-800/40 transition-colors group/row cursor-pointer"
+                className="hover:bg-slate-800/40 transition-colors group/row"
               >
                 <td className="px-5 py-4 font-mono font-bold text-cyan-400 text-xs">
                   {c.client_code || "-"}
@@ -168,7 +250,7 @@ export function ClientsTable({ clients }: { clients: ClientRow[] }) {
                 <td className="px-5 py-4">
                   <Link 
                     href={`/clients/${c.id}`} 
-                    className="font-bold text-slate-200 hover:text-cyan-400 transition-colors inline-flex items-center gap-1.5 text-base group-hover/row:underline decoration-cyan-500/50 underline-offset-4"
+                    className="font-bold text-slate-200 hover:text-cyan-400 transition-colors inline-flex items-center gap-1.5 text-base group-hover/row:underline decoration-cyan-500/50 underline-offset-4 cursor-pointer"
                   >
                     <span>{c.name}</span>
                     <ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover/row:opacity-100 transition-opacity text-cyan-400" />
@@ -204,10 +286,15 @@ export function ClientsTable({ clients }: { clients: ClientRow[] }) {
                 </td>
                 <td className="px-5 py-4 text-right font-mono font-semibold">
                   {c.overdueDebt > 0 ? (
-                    <span className="text-rose-400 inline-flex items-center gap-1 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 text-xs">
-                      <Clock className="w-3 h-3" />
-                      {formatCurrency(c.overdueDebt)}
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="text-rose-400 inline-flex items-center gap-1 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 text-xs">
+                        <Clock className="w-3 h-3" />
+                        {formatCurrency(c.overdueDebt)}
+                      </span>
+                      <span className="animate-pulse bg-rose-600/90 text-white text-[9px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider shadow-sm">
+                        MORA CRÍTICA
+                      </span>
+                    </div>
                   ) : (
                     <span className="text-slate-500 text-xs">$0.00</span>
                   )}
